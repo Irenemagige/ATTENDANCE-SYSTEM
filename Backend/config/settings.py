@@ -7,9 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-+_ej_51%6@xq(s(p5l-rsug#j_go9=u082q!%9)g-zy-@r8a_)"
 DEBUG = True
-ALLOWED_HOSTS = ["127.0.0.1", "localhost",  "attendance-system-production-21e3.up.railway.app"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost",  "attendance-system-production-5479.up.railway.app"]
 CSRF_TRUSTED_ORIGINS = [
-    "https://attendance-system-production-21e3.up.railway.app",
+    "https://attendance-system-production-5479.up.railway.app",
 ]
 
 
