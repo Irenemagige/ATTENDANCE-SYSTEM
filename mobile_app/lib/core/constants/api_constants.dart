@@ -8,7 +8,7 @@ class ApiConstants {
       case "emulator":
         return "http://10.0.2.2:8000/api/";
       case "prod":
-        return "https://attendance-system-production-21e3.up.railway.app/api/";
+        return "https://attendance-system-production-5479.up.railway.app/api/";
       default:
         return "http://127.0.0.1:8000/api/";
     }
