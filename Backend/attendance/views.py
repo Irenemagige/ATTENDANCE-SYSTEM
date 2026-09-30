@@ -1605,14 +1605,13 @@ def student_attendance_history(request):
         user=user
     )
 
-
     # ============================
-# OVERALL ATTENDANCE
-# ============================
+    # OVERALL ATTENDANCE
+    # ============================
 
     attendance_records = Attendance.objects.filter(
-      student=student
-)
+        student=student
+    )
 
     total_sessions = attendance_records.count()
 
@@ -1620,15 +1619,13 @@ def student_attendance_history(request):
 
     if total_sessions > 0:
         total_percentage = sum(
-        float(record.attendance_percentage or 0)
-        for record in attendance_records
-    )
+            float(record.attendance_percentage or 0)
+            for record in attendance_records
+        )
 
-    overall_percentage = (
-        total_percentage / total_sessions
-    )
-
-
+        overall_percentage = (
+            total_percentage / total_sessions
+        )
 
     # ============================
     # SUBJECT PERFORMANCE
@@ -1638,98 +1635,71 @@ def student_attendance_history(request):
         course=student.course
     )
 
-
     subject_performance = []
-
 
     for subject in subjects:
 
         subject_records = Attendance.objects.filter(
-        student=student,
-        session__subject=subject
+            student=student,
+            session__subject=subject
         )
 
-    total = subject_records.count()
+        total = subject_records.count()
 
-    percentage = 0
+        percentage = 0
 
-    if total > 0:
-        total_percentage = sum(
-            float(record.attendance_percentage or 0)
-            for record in subject_records
-        )
+        if total > 0:
+            total_percentage = sum(
+                float(record.attendance_percentage or 0)
+                for record in subject_records
+            )
 
-        percentage = total_percentage / total
-
-
+            percentage = total_percentage / total
 
         subject_performance.append({
-
             "subject": subject.name,
-
             "percentage": round(
                 percentage,
                 2
             )
-
         })
 
-
-
     # ============================
-    # RECENT ATTENDANCE
+    # ATTENDANCE HISTORY
     # ============================
 
-    recent = Attendance.objects.filter(
-        student=student
-    ).order_by(
-        "-check_in_time"
-    )[:10]
+    history = []
 
+    for record in attendance_records:
 
-    recent_attendance = []
-
-
-    for record in recent:
-
-        recent_attendance.append({
-
-    "subject":
-    record.session.subject.name,
-
-    "date":
-    record.session.date,
-
-    "status":
-    record.status,
-    "check_in_time": record.check_in_time,
-    "check_out_time": record.check_out_time,
-
-    "percentage":
-    float(record.attendance_percentage)
-    if record.check_out_time
-    else None
-
-})
-
-
+        history.append({
+            "id": record.id,
+            "subject": record.session.subject.name,
+            "course": record.session.course.name,
+            "check_in_time": (
+                record.check_in_time.isoformat()
+                if record.check_in_time
+                else None
+            ),
+            "check_out_time": (
+                record.check_out_time.isoformat()
+                if record.check_out_time
+                else None
+            ),
+            "attendance_percentage": float(
+                record.attendance_percentage or 0
+            ),
+            "status": record.status,
+        })
 
     return Response({
-
-        "overall_percentage":
-        round(
+        "overall_percentage": round(
             overall_percentage,
             2
         ),
-
-
-        "subjects":
-        subject_performance,
-
-
-        "recent":
-        recent_attendance
-
+        "total_sessions": total_sessions,
+        "subject_performance": subject_performance,
+        "history": history,
     })
     
 @api_view(["GET"])
