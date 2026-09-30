@@ -366,16 +366,24 @@ if (!sessionExists) {
 
   // Once checked in, don't allow another check-in.
   bool canCheckIn() {
-    if (!hasActiveSession) return false;
+  if (!hasActiveSession) return false;
 
-    if (attendanceState == AttendanceFlowState.checkedIn) {
-      return false;
-    }
-
-    // The actual security checks are performed inside startCheckIn().
-    // The button should therefore be enabled when a session exists.
-    return true;
+  if (attendanceState == AttendanceFlowState.checkedIn) {
+    return false;
   }
+
+  final snapshot = securitySnapshot;
+
+  if (snapshot == null) return false;
+
+  if (!snapshot.gpsValid) return false;
+  if (!snapshot.geofenceValid) return false;
+  if (snapshot.wifiStatus != 'Trusted') return false;
+  if (!snapshot.bleDetected) return false;
+  if (!snapshot.timeWindowValid) return false;
+
+  return true;
+}
 double? distanceFromClassroom;
 
   List<String> missingSecuritySteps({required bool forCheckout}) {
@@ -422,6 +430,19 @@ double? distanceFromClassroom;
   bool forCheckout = false,
 }) async {
   if (!mounted) return;
+  final snapshot = securitySnapshot;
+
+if (snapshot == null ||
+    !snapshot.gpsValid ||
+    !snapshot.geofenceValid ||
+    snapshot.wifiStatus != 'Trusted' ||
+    !snapshot.bleDetected ||
+    !snapshot.timeWindowValid) {
+  _snack(
+    'Complete GPS, geofence, Wi-Fi, BLE and time validation first.',
+  );
+  return;
+}
 
   // BLOCK RE-SCANNING AFTER SUCCESSFUL VERIFICATION
   if (!forCheckout && (fingerprintPassed || otpVerified)) {
