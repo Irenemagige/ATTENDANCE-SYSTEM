@@ -1598,20 +1598,126 @@ def location_update(request):
     
 @api_view(['GET'])
 def student_attendance_history(request):
-
     user = request.user
+    student = Student.objects.get(user=user)
 
-    student = Student.objects.get(
-        user=user
-    )
-
-    # ============================
-    # OVERALL ATTENDANCE
-    # ============================
-
+    # Get this student's attendance records
     attendance_records = Attendance.objects.filter(
         student=student
+    ).select_related(
+        "session",
+        "session__subject",
+        "session__course",
+        "session__timetable",
+    ).order_by(
+        "session__date",
+        "session__start_time",
     )
+
+    def get_scheduled_hours(session):
+        """
+        Get the scheduled duration of a session in hours.
+
+        Normal session:
+            Use the timetable start and end time.
+
+        Override session:
+            Use override_duration_minutes.
+        """
+
+        if session.is_override:
+            return session.override_duration_minutes / 60
+
+        if session.timetable:
+            start = session.timetable.start_time
+            end = session.timetable.end_time
+
+            if start and end:
+                start_minutes = start.hour * 60 + start.minute
+                end_minutes = end.hour * 60 + end.minute
+
+                # Handle a timetable that crosses midnight
+                if end_minutes <= start_minutes:
+                    end_minutes += 24 * 60
+
+                duration_minutes = end_minutes - start_minutes
+                return duration_minutes / 60
+
+        # Fallback if there is no timetable
+        if session.end_time and session.start_time:
+            duration = (
+                session.end_time - session.start_time
+            ).total_seconds() / 3600
+
+            return max(duration, 0)
+
+        return 0
+
+    def get_attended_hours(attendance):
+        """
+        Calculate how many hours the student actually attended
+        for this individual session.
+        """
+
+        if not attendance.check_in_time:
+            return 0
+
+        # If the student checked out normally
+        if attendance.check_out_time:
+            attended_seconds = (
+                attendance.check_out_time
+                - attendance.check_in_time
+            ).total_seconds()
+
+            return max(attended_seconds / 3600, 0)
+
+        # No checkout means no confirmed attended duration
+        return 0
+
+    def calculate_subject_percentage(subject, current_session):
+        """
+        Calculate cumulative subject attendance up to this session.
+
+        Formula:
+
+            Total attended hours
+            -------------------- × 100
+            Total scheduled hours
+        """
+
+        subject_records = attendance_records.filter(
+            session__subject=subject,
+            session__date__lte=current_session.date,
+        )
+
+        total_scheduled_hours = 0
+        total_attended_hours = 0
+
+        for subject_record in subject_records:
+            session = subject_record.session
+
+            scheduled_hours = get_scheduled_hours(session)
+            attended_hours = get_attended_hours(subject_record)
+
+            total_scheduled_hours += scheduled_hours
+            total_attended_hours += min(
+                attended_hours,
+                scheduled_hours
+            )
+
+        if total_scheduled_hours == 0:
+            return 0
+
+        percentage = (
+            total_attended_hours
+            / total_scheduled_hours
+        ) * 100
+
+        return round(min(percentage, 100), 2)
+
+    # ---------------------------------------------------------
+    # CURRENT OVERALL ATTENDANCE
+    # ---------------------------------------------------------
 
     total_sessions = attendance_records.count()
 
@@ -1623,13 +1729,11 @@ def student_attendance_history(request):
             for record in attendance_records
         )
 
-        overall_percentage = (
-            total_percentage / total_sessions
-        )
+        overall_percentage = total_percentage / total_sessions
 
-    # ============================
+    # ---------------------------------------------------------
     # SUBJECT PERFORMANCE
-    # ============================
+    # ---------------------------------------------------------
 
     subjects = Subject.objects.filter(
         course=student.course
@@ -1638,58 +1742,75 @@ def student_attendance_history(request):
     subject_performance = []
 
     for subject in subjects:
-
-        subject_records = Attendance.objects.filter(
-            student=student,
+        subject_records = attendance_records.filter(
             session__subject=subject
         )
 
-        total = subject_records.count()
+        if subject_records.exists():
+            latest_session = subject_records.order_by(
+                "-session__date",
+                "-session__start_time",
+            ).first().session
 
-        percentage = 0
-
-        if total > 0:
-            total_percentage = sum(
-                float(record.attendance_percentage or 0)
-                for record in subject_records
+            percentage = calculate_subject_percentage(
+                subject,
+                latest_session
             )
-
-            percentage = total_percentage / total
+        else:
+            percentage = 0
 
         subject_performance.append({
             "subject": subject.name,
-            "percentage": round(
-                percentage,
-                2
-            )
+            "percentage": percentage,
         })
 
-    # ============================
+    # ---------------------------------------------------------
     # ATTENDANCE HISTORY
-    # ============================
+    # ---------------------------------------------------------
 
     history = []
 
     for record in attendance_records:
 
+        session = record.session
+
+        subject_percentage = calculate_subject_percentage(
+            session.subject,
+            session
+        )
+
         history.append({
             "id": record.id,
-            "subject": record.session.subject.name,
-            "course": record.session.course.name,
+
+            "subject": session.subject.name,
+
+            "course": session.course.name,
+
+            # Date of the attendance session
+            "date": session.date.isoformat()
+            if session.date else None,
+
             "check_in_time": (
                 record.check_in_time.isoformat()
                 if record.check_in_time
                 else None
             ),
+
             "check_out_time": (
                 record.check_out_time.isoformat()
                 if record.check_out_time
                 else None
             ),
+
+            # Attendance percentage for THIS session
             "attendance_percentage": float(
                 record.attendance_percentage or 0
             ),
+
             "status": record.status,
+
+            # Cumulative attendance for THIS subject
+            "subject_attendance_percentage": subject_percentage,
         })
 
     return Response({
@@ -1697,8 +1818,11 @@ def student_attendance_history(request):
             overall_percentage,
             2
         ),
+
         "total_sessions": total_sessions,
+
         "subject_performance": subject_performance,
+
         "history": history,
     })
     
