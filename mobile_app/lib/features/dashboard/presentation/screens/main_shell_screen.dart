@@ -27,6 +27,8 @@ class _MainShellScreenState extends State<MainShellScreen>
     with WidgetsBindingObserver {
   int currentIndex = 0;
   int unreadNotificationCount = 0;
+  bool _notificationsOpened = false;
+
   bool isLoading = true;
   bool isSecurityLoading = false;
   bool _securityEvaluationRunning = false;
@@ -94,25 +96,20 @@ class _MainShellScreenState extends State<MainShellScreen>
   }
 
   Future<void> _loadInitialData() async {
-    print("STEP 1: loadUser start");
     await loadUser();
-    print("STEP 2: loadUser finished");
-
-    print("STEP 5: refreshSessionStatus start");
     await refreshSessionStatus(showSnack: false);
-    print("STEP 6: refreshSessionStatus finished");
-
-    print("STEP 3: evaluateSecurity start");
     await evaluateSecurity();
-    print("STEP 4: evaluateSecurity finished");
 
-    print("STEP 7: loadAttendanceStats start");
+    if (attendanceState == AttendanceFlowState.checkedIn &&
+      activeSession?['session_active'] == true &&
+      securitySnapshot != null) {
+    await attendanceService.updateLocation(
+      latitude: securitySnapshot!.latitude,
+      longitude: securitySnapshot!.longitude,
+    );
+  }
+
     await loadAttendanceStats();
-    print("STEP 8: loadAttendanceStats finished");
-
-    print("STEP 9: setting isLoading false");
-
-    print("STEP 9: loading unread notifications");
     await loadUnreadNotificationCount();
   
     
@@ -746,9 +743,16 @@ if (!identityVerified) {
       result['data'] ?? {},
     );
 
+    final count = data['unread_count'] ?? 0;
+
+    // If the user has already opened notifications,
+    // do not bring back the old unread count.
+    if (_notificationsOpened && count > 0) {
+      return;
+    }
+
     setState(() {
-      unreadNotificationCount =
-          data['unread_count'] ?? 0;
+      unreadNotificationCount = count;
     });
   }
 }
@@ -853,6 +857,8 @@ if (!identityVerified) {
 
     setState(() {
       unreadNotificationCount = 0;
+      _notificationsOpened = true;
+
     });
   },
 ),

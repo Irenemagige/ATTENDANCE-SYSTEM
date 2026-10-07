@@ -159,6 +159,7 @@ def classroom_list(request):
             "room_number": classroom.room_number,
             "latitude": classroom.latitude,
             "longitude": classroom.longitude,
+            "altitude": classroom.altitude,
             "radius_meters": classroom.radius_meters,
         }
         for classroom in classrooms

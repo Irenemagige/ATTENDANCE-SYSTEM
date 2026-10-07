@@ -34,19 +34,21 @@ void initState() {
   loadNotifications();
 }
 
+  
   Future<void> markAllRead() async {
-
-    final token = await StorageService.getAccessToken();
+  final token = await StorageService.getAccessToken();
 
     if (token == null) {
       return;
     }
 
+    final result =
+      await DashboardService().markAllNotificationsRead(token);
 
-    await DashboardService()
-        .markAllNotificationsRead(token);
+      print("MARK ALL READ RESULT: $result");
+    }
 
-  }
+
 
 
 

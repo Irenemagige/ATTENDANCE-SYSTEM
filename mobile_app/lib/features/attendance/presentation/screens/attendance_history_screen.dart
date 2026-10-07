@@ -178,12 +178,10 @@ class _AttendanceHistoryScreenState
 
 
     final subjects =
-        history?['subjects'] ?? [];
-
-
+      history?['subject_performance'] ?? [];
 
     final recent =
-        history?['recent'] ?? [];
+      history?['history'] ?? [];
 
 
 
@@ -412,20 +410,28 @@ class _AttendanceHistoryScreenState
         attendance['date'].toString(),
       ),
 
+      const SizedBox(height: 6),
+
+      Text(
+        "Session Attendance: "
+        "${attendance['attendance_percentage']}% — "
+        "${status.replaceAll('_', ' ')}",
+      ),
+
       const SizedBox(height: 4),
 
       Text(
-        "Check-in: ${formatTime(attendance['check_in_time'])}",
+        "Subject Attendance: "
+        "${attendance['subject_attendance_percentage']}%",
       ),
 
-      Text(
-        "Check-out: ${formatTime(attendance['check_out_time'])}",
-      ),
+      const SizedBox(height: 4),
+
     ],
   ),
 
   trailing: Text(
-    status,
+    status.replaceAll('_', ' '),
     style: TextStyle(
       fontWeight: FontWeight.bold,
 

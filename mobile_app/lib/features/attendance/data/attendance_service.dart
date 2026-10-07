@@ -161,6 +161,40 @@ class AttendanceService {
     };
   }
 
+    Future<Map<String, dynamic>> updateLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final token = await StorageService.getToken();
+
+    final response = await http.post(
+      Uri.parse(
+        "${ApiConstants.baseUrl}attendance/location-update/",
+      ),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token",
+        "Accept": "application/json",
+      },
+      body: jsonEncode({
+        "latitude": latitude,
+        "longitude": longitude,
+        "wifi_valid": true,
+        "beacon_valid": true,
+      }),
+    );
+
+    print("LOCATION UPDATE STATUS: ${response.statusCode}");
+    print("LOCATION UPDATE BODY: ${response.body}");
+
+    return {
+      "success": response.statusCode >= 200 &&
+          response.statusCode < 300,
+      "statusCode": response.statusCode,
+      "data": _decode(response.body),
+    };
+  }
+
   Future<Map<String, dynamic>> markAttendance({
     required int sessionId,
   }) async {
@@ -239,3 +273,4 @@ Future<Map<String, dynamic>> getAttendanceHistory() async {
   }
 
 }
+
