@@ -139,6 +139,7 @@ class Classroom(models.Model):
 
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    altitude = models.FloatField(null=True, blank=True)
     radius_meters = models.IntegerField(default=20)
 
     def __str__(self):
