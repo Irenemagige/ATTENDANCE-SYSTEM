@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 
-from attendance.models import Attendance, AttendanceSession, Movementlog
+from attendance.models import Attendance, AttendanceSession, MovementLog
 
 User = get_user_model()
 
@@ -36,4 +36,4 @@ class AttendanceAdmin(admin.ModelAdmin):
     list_display = ("student", "session", "status", "check_in_time", "check_out_time")
     search_fields = ("student__reg_number", "student__full_name", "session__subject__name")
     list_filter = ("status", "session__course", "session__date")
-admin.site.register(Movementlog)
+admin.site.register(MovementLog)
