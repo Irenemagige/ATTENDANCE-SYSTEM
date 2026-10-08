@@ -1,10 +1,5 @@
 import 'package:flutter/material.dart';
-
 import 'package:mobile_app/features/timetable/data/timetable_service.dart';
-
-const _primary = Color(0xFF2563EB);
-const _primaryDark = Color(0xFF0F172A);
-const _surface = Color(0xFFF8FAFC);
 
 class TimetableScreen extends StatefulWidget {
   const TimetableScreen({super.key});
@@ -18,6 +13,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   bool _loading = true;
   String? _error;
+  bool _showTimetable = false;
 
   Map<String, dynamic>? _course;
   List<dynamic> _entries = [];
@@ -28,24 +24,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
     'WED',
     'THU',
     'FRI',
-  ];
-
-  final Map<String, String> _dayNames = {
-    'MON': 'Monday',
-    'TUE': 'Tuesday',
-    'WED': 'Wednesday',
-    'THU': 'Thursday',
-    'FRI': 'Friday',
-  };
-
-  final List<String> _timeSlots = [
-    '07:00-09:00',
-    '09:00-11:00',
-    '11:00-13:00',
-    '13:00-15:00',
-    '15:00-17:00',
-    '17:00-19:00',
-    '19:00-20:00',
   ];
 
   @override
@@ -66,8 +44,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
       if (!mounted) return;
 
       setState(() {
-        _course = Map<String, dynamic>.from(result['course'] ?? {});
-        _entries = List<dynamic>.from(result['timetable'] ?? []);
+        _course = Map<String, dynamic>.from(
+          result['course'] ?? {},
+        );
+
+        _entries = List<dynamic>.from(
+          result['timetable'] ?? [],
+        );
+
         _loading = false;
       });
     } catch (e) {
@@ -80,90 +64,60 @@ class _TimetableScreenState extends State<TimetableScreen> {
     }
   }
 
-  dynamic _findEntry(String day, String timeSlot) {
+  List<String> _getTimeSlots() {
+    final slots = <String>{};
+
+    for (final item in _entries) {
+      final startTime = item['start_time']?.toString() ?? '';
+      final endTime = item['end_time']?.toString() ?? '';
+
+      if (startTime.isNotEmpty && endTime.isNotEmpty) {
+        slots.add('$startTime-$endTime');
+      }
+    }
+
+    final result = slots.toList();
+
+    result.sort((a, b) {
+      final aStart = a.split('-').first;
+      final bStart = b.split('-').first;
+
+      return aStart.compareTo(bStart);
+    });
+
+    return result;
+  }
+
+  Map<String, dynamic>? _findEntry(
+    String day,
+    String timeSlot,
+  ) {
     final parts = timeSlot.split('-');
 
-    if (parts.length != 2) return null;
+    if (parts.length != 2) {
+      return null;
+    }
 
     final start = parts[0];
     final end = parts[1];
 
     for (final item in _entries) {
-      final entry = Map<String, dynamic>.from(item);
-
-      if (entry['day'] == day &&
-          entry['start_time'] == start &&
-          entry['end_time'] == end) {
-        return entry;
+      if (item['day']?.toString() == day &&
+          item['start_time']?.toString() == start &&
+          item['end_time']?.toString() == end) {
+        return Map<String, dynamic>.from(item);
       }
     }
 
     return null;
   }
 
-  Color _subjectColor(String subject) {
-    final name = subject.toLowerCase();
-
-    if (name.contains('server')) {
-      return const Color(0xFFE0F2FE);
-    }
-
-    if (name.contains('analytics')) {
-      return const Color(0xFFDCFCE7);
-    }
-
-    if (name.contains('cloud')) {
-      return const Color(0xFFFEF3C7);
-    }
-
-    if (name.contains('law')) {
-      return const Color(0xFFFCE7F3);
-    }
-
-    return const Color(0xFFEDE9FE);
-  }
-
-  Color _subjectAccent(String subject) {
-    final name = subject.toLowerCase();
-
-    if (name.contains('server')) {
-      return const Color(0xFF0284C7);
-    }
-
-    if (name.contains('analytics')) {
-      return const Color(0xFF16A34A);
-    }
-
-    if (name.contains('cloud')) {
-      return const Color(0xFFD97706);
-    }
-
-    if (name.contains('law')) {
-      return const Color(0xFFDB2777);
-    }
-
-    return const Color(0xFF7C3AED);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _surface,
       appBar: AppBar(
-        backgroundColor: _primaryDark,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: const Text(
-          'My Timetable',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh timetable',
-            onPressed: _loading ? null : _loadTimetable,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+        title: const Text('My Timetable'),
+        centerTitle: true,
       ),
       body: _buildBody(),
     );
@@ -177,47 +131,54 @@ class _TimetableScreenState extends State<TimetableScreen> {
     }
 
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.error_outline,
-                size: 52,
-                color: Colors.redAccent,
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Unable to load timetable',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
+      return RefreshIndicator(
+        onRefresh: _loadTimetable,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.3,
+            ),
+            const Icon(
+              Icons.error_outline,
+              size: 60,
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  _error!,
+                  textAlign: TextAlign.center,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: _loadTimetable,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try Again'),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
     if (_entries.isEmpty) {
-      return const Center(
-        child: Text(
-          'No timetable has been assigned to your course.',
-          textAlign: TextAlign.center,
+      return RefreshIndicator(
+        onRefresh: _loadTimetable,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.3,
+            ),
+            const Icon(
+              Icons.calendar_month_outlined,
+              size: 60,
+            ),
+            const SizedBox(height: 16),
+            const Center(
+              child: Text(
+                'No timetable has been assigned to your course.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -228,98 +189,142 @@ class _TimetableScreenState extends State<TimetableScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           _buildCourseHeader(),
-          const SizedBox(height: 16),
-          _buildTimetableCard(),
+
+          if (_showTimetable) ...[
+            const SizedBox(height: 16),
+            _buildTimetableCard(),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildCourseHeader() {
-    final courseName = _course?['name']?.toString() ?? 'My Course';
-    final courseCode = _course?['code']?.toString() ?? '';
+    final courseName =
+        _course?['name']?.toString() ?? 'My Course';
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            _primary,
-            _primaryDark,
+    final courseCode =
+        _course?['code']?.toString() ?? '';
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _showTimetable = !_showTimetable;
+        });
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(
+            colors: [
+              Color(0xFF1565C0),
+              Color(0xFF1976D2),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+              color: Colors.black12,
+            ),
           ],
         ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(15),
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.calendar_month,
+                color: Colors.white,
+                size: 28,
+              ),
             ),
-            child: const Icon(
-              Icons.calendar_month,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'My Class Timetable',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  courseName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                if (courseCode.isNotEmpty)
-                  Text(
-                    courseCode,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w600,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'My Class Timetable',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-              ],
+                  const SizedBox(height: 5),
+                  Text(
+                    courseName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
+                  ),
+                  if (courseCode.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      courseCode,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
-        ],
+            Icon(
+              _showTimetable
+                  ? Icons.keyboard_arrow_up
+                  : Icons.arrow_forward_ios,
+              color: Colors.white,
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildTimetableCard() {
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeaderRow(),
-              ..._timeSlots.map(_buildTimeRow),
-            ],
+    final timeSlots = _getTimeSlots();
+
+    if (timeSlots.isEmpty) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Center(
+            child: Text(
+              'No timetable entries available.',
+            ),
           ),
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 3,
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeaderRow(),
+
+            ...timeSlots.map(
+              (timeSlot) => _buildTimeRow(timeSlot),
+            ),
+          ],
         ),
       ),
     );
@@ -328,38 +333,39 @@ class _TimetableScreenState extends State<TimetableScreen> {
   Widget _buildHeaderRow() {
     return Row(
       children: [
-        _headerCell(
+        _buildHeaderCell(
           'TIME',
-          width: 92,
+          width: 110,
         ),
         ..._days.map(
-          (day) => _headerCell(
-            _dayNames[day]!,
-            width: 142,
+          (day) => _buildHeaderCell(
+            day,
+            width: 150,
           ),
         ),
       ],
     );
   }
 
-  Widget _headerCell(
+  Widget _buildHeaderCell(
     String text, {
     required double width,
   }) {
     return Container(
       width: width,
-      height: 58,
+      height: 50,
       alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        color: _primaryDark,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        border: Border.all(
+          color: Colors.grey.shade300,
+        ),
       ),
       child: Text(
         text,
-        textAlign: TextAlign.center,
         style: const TextStyle(
-          color: Colors.white,
+          fontWeight: FontWeight.bold,
           fontSize: 12,
-          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -367,156 +373,150 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   Widget _buildTimeRow(String timeSlot) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          width: 92,
+          width: 110,
           height: 105,
-          padding: const EdgeInsets.all(8),
           alignment: Alignment.center,
-          decoration: const BoxDecoration(
-            color: Color(0xFFF1F5F9),
-            border: Border(
-              right: BorderSide(
-                color: Color(0xFFE2E8F0),
-              ),
-              bottom: BorderSide(
-                color: Color(0xFFE2E8F0),
-              ),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            border: Border.all(
+              color: Colors.grey.shade300,
             ),
           ),
           child: Text(
             timeSlot,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: _primaryDark,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
             ),
           ),
         ),
+
         ..._days.map(
-          (day) => _buildSubjectCell(
-            _findEntry(day, timeSlot),
-          ),
+          (day) {
+            final entry = _findEntry(
+              day,
+              timeSlot,
+            );
+
+            return _buildSubjectCell(entry);
+          },
         ),
       ],
     );
   }
 
-  Widget _buildSubjectCell(dynamic item) {
-    if (item == null) {
+  Widget _buildSubjectCell(
+    Map<String, dynamic>? entry,
+  ) {
+    if (entry == null) {
       return Container(
-        width: 142,
+        width: 150,
         height: 105,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: Colors.white,
-          border: Border(
-            right: BorderSide(
-              color: Color(0xFFE2E8F0),
-            ),
-            bottom: BorderSide(
-              color: Color(0xFFE2E8F0),
-            ),
+          border: Border.all(
+            color: Colors.grey.shade300,
           ),
         ),
         child: const Center(
           child: Text(
-            '—',
+            '-',
             style: TextStyle(
-              color: Color(0xFFCBD5E1),
-              fontSize: 18,
+              color: Colors.grey,
             ),
           ),
         ),
       );
     }
 
-    final entry = Map<String, dynamic>.from(item);
-
-    final subject = Map<String, dynamic>.from(
+    final subject =
+        Map<String, dynamic>.from(
       entry['subject'] ?? {},
     );
 
-    final lecturer = Map<String, dynamic>.from(
+    final lecturer =
+        Map<String, dynamic>.from(
       entry['lecturer'] ?? {},
     );
 
     final subjectName =
         subject['name']?.toString() ?? 'Subject';
 
-    final lecturerName =
-        lecturer['name']?.toString() ?? 'Lecturer';
+    final subjectCode =
+        subject['code']?.toString() ?? '';
 
-    final background = _subjectColor(subjectName);
-    final accent = _subjectAccent(subjectName);
+    final lecturerName =
+        lecturer['name']?.toString() ?? '';
+
+    final room =
+        entry['room']?.toString() ?? '';
 
     return Container(
-      width: 142,
+      width: 150,
       height: 105,
-      padding: const EdgeInsets.all(7),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: background,
-        border: Border(
-          right: BorderSide(
-            color: Colors.white.withValues(alpha: 0.8),
-          ),
-          bottom: const BorderSide(
-            color: Color(0xFFE2E8F0),
-          ),
+        border: Border.all(
+          color: Colors.grey.shade300,
         ),
       ),
-      child: Container(
-        padding: const EdgeInsets.all(9),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border(
-            left: BorderSide(
-              color: accent,
-              width: 4,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            subjectName,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
             ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+
+          if (subjectCode.isNotEmpty) ...[
+            const SizedBox(height: 3),
             Text(
-              subjectName,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+              subjectCode,
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: _primaryDark,
                 fontSize: 11,
-                fontWeight: FontWeight.w800,
+                color: Colors.grey.shade700,
               ),
             ),
-            const SizedBox(height: 6),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.person_outline,
-                  size: 13,
-                  color: accent,
-                ),
-                const SizedBox(width: 3),
-                Expanded(
-                  child: Text(
-                    lecturerName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: accent,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+          ],
+
+          if (lecturerName.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              lecturerName,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+              ),
             ),
           ],
-        ),
+
+          if (room.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              'Room: $room',
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
