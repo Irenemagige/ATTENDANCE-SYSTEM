@@ -87,9 +87,23 @@ class StudentCourse(models.Model):
     def __str__(self):
         return f"{self.student.username} -> {self.course.name}"
     
-    
 class Timetable(models.Model):
-    course = models.ForeignKey('Course', on_delete=models.CASCADE)
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="timetables",
+    )
+
+    subject = models.ForeignKey(
+    Subject,
+    on_delete=models.CASCADE,
+    related_name="timetables",
+)
+
+    lecturer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+    )
 
     DAYS = [
         ("MON", "Monday"),
@@ -101,9 +115,6 @@ class Timetable(models.Model):
         ("SUN", "Sunday"),
     ]
 
-    course = models.ForeignKey(Course, on_delete=models.CASCADE)
-    lecturer = models.ForeignKey(User, on_delete=models.CASCADE)
-
     day = models.CharField(max_length=10, choices=DAYS)
 
     start_time = models.TimeField()
@@ -114,7 +125,7 @@ class Timetable(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.course} - {self.day} {self.start_time}"
+        return f"{self.course} - {self.subject} - {self.day} {self.start_time}"
     
 # ========================
 # CLASSROOM MODEL

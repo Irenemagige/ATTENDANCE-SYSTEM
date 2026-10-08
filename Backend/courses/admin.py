@@ -84,9 +84,32 @@ class StudentCourseAdmin(GroupFilteredUserAdminMixin, admin.ModelAdmin):
 @admin.register(Timetable)
 class TimetableAdmin(GroupFilteredUserAdminMixin, admin.ModelAdmin):
     user_group_filters = {"lecturer": "Lecturer"}
-    list_display = ("course", "lecturer", "day", "start_time", "end_time", "room")
-    search_fields = ("course__name", "course__code", "lecturer__username", "room")
-    list_filter = ("day", "course")
+
+    list_display = (
+        "course",
+        "subject",
+        "lecturer",
+        "day",
+        "start_time",
+        "end_time",
+        "room",
+    )
+
+    search_fields = (
+        "course__name",
+        "course__code",
+        "subject__name",
+        "subject__code",
+        "lecturer__username",
+        "room",
+    )
+
+    list_filter = (
+        "day",
+        "course",
+        "subject",
+        "lecturer",
+    )
     
 @admin.register(Classroom)
 class ClassroomAdmin(admin.ModelAdmin):

@@ -94,6 +94,13 @@ def start_session(request):
     override_reason = request.data.get(
         "override_reason"
     )
+    override_start_time = request.data.get(
+    "override_start_time"
+    )
+
+    override_end_time = request.data.get(
+    "override_end_time"
+    )
     
     
     # ==============================
@@ -116,6 +123,7 @@ def start_session(request):
 
     timetable = Timetable.objects.filter(
     course_id=course_id,
+    subject_id=subject_id,
     lecturer=user,
     day=days[today]
     ).first()
@@ -139,6 +147,18 @@ def start_session(request):
         },
         status=400
     )
+        
+    if is_override and (
+    not override_start_time or
+    not override_end_time
+    ):
+
+        return Response(
+        {
+            "error": "Override start time and end time are required"
+        },
+        status=400
+        )
 
     # Fixed, explicit values for the current demo environment.
     allowed_wifi = "ARUSOPASUANET"
@@ -229,60 +249,160 @@ def start_session(request):
             )
             
     now = timezone.localtime()
+    
+        # ==========================================
+    # AMENDMENT 4: DAILY SESSION TIME RESTRICTION
+    # ==========================================
+
+    current_time = now.time()
+
+    allowed_start = datetime.strptime(
+        "07:00",
+        "%H:%M"
+    ).time()
+
+    allowed_end = datetime.strptime(
+        "20:00",
+        "%H:%M"
+    ).time()
+
+    if current_time < allowed_start or current_time > allowed_end:
+        return Response(
+            {
+                "error": (
+                    "Attendance sessions can only be started "
+                    "between 07:00 and 20:00."
+                )
+            },
+            status=400
+        )
+
+    
 
     if is_override:
-        session_end_time = now + timedelta(minutes=120)
-    else:
+
+        try:
+            override_start = datetime.strptime(
+                override_start_time,
+                "%H:%M"
+            ).time()
+
+            override_end = datetime.strptime(
+                override_end_time,
+                "%H:%M"
+            ).time()
+
+        except (TypeError, ValueError):
+
+            return Response(
+                {
+                    "error": "Override times must use HH:MM format, for example 09:00"
+                },
+                status=400
+            )
+            
+                # ==========================================
+        # AMENDMENT 4: OVERRIDE TIME RESTRICTION
+        # ==========================================
+
+        if (
+            override_start < allowed_start
+            or override_end > allowed_end
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Override sessions must start and end "
+                        "between 07:00 and 20:00."
+                    )
+                },
+                status=400
+            )
+
+        if override_end <= override_start:
+
+            return Response(
+                {
+                    "error": "Override end time must be after start time"
+                },
+                status=400
+            )
+
+        session_start_time = timezone.make_aware(
+            datetime.combine(
+                now.date(),
+                override_start
+            ),
+            timezone.get_current_timezone()
+        )
+
         session_end_time = timezone.make_aware(
-        datetime.combine(
-            now.date(),
-            timetable.end_time
-        ),
-        timezone.get_current_timezone()
-    )
-     
+            datetime.combine(
+                now.date(),
+                override_end
+            ),
+            timezone.get_current_timezone()
+        )
+
+    else:
+
+        session_start_time = now
+
+        session_end_time = timezone.make_aware(
+            datetime.combine(
+                now.date(),
+                timetable.end_time
+            ),
+            timezone.get_current_timezone()
+        )
+
     session = AttendanceSession.objects.create(
-
-    lecturer=user,
-
-    course_id=course_id,
-
-    subject=subject,
-
-    classroom=classroom,
-
-    timetable=timetable,
-
-    latitude=classroom.latitude,
-
-    longitude=classroom.longitude,
-
-    radius_meters=classroom.radius_meters,
-
-    allowed_wifi_bssid=allowed_wifi,
-
-    end_time=session_end_time,
-
-    is_active=True,
-
-    is_override=is_override,
-
-    override_reason=override_reason,
-
-    override_duration_minutes=120
-)
+        lecturer=user,
+        course_id=course_id,
+        subject=subject,
+        classroom=classroom,
+        timetable=timetable,
+        latitude=classroom.latitude,
+        longitude=classroom.longitude,
+        radius_meters=classroom.radius_meters,
+        allowed_wifi_bssid=allowed_wifi,
+        start_time=session_start_time,
+        end_time=session_end_time,
+        is_active=(
+            session_start_time <= now
+        ),
+        is_override=is_override,
+        override_reason=override_reason,
+        override_duration_minutes=120
+    )
     
     students = Student.objects.filter(
-    course=session.course
+        course=session.course
     )
 
     for student in students:
-        Notification.objects.create(
-        student=student,
-        title="Attendance Session Started",
-        message=f"{session.subject.name} session is now active."
-    )
 
+        if session.is_active:
+
+            Notification.objects.create(
+                student=student,
+                title="Attendance Session Started",
+                message=(
+                    f"{session.subject.name} session is now active."
+                )
+            )
+
+        else:
+
+            Notification.objects.create(
+                student=student,
+                title="Attendance Session Scheduled",
+                message=(
+                    f"{session.subject.name} session is scheduled "
+                    f"to start at "
+                    f"{session.start_time.strftime('%H:%M')}."
+                )
+            )
 
     return Response(
         {
@@ -1355,11 +1475,32 @@ def active_session(request):
         "message": "No active attendance session available",
     })
 
-
-
 def auto_close_expired_sessions():
 
     now = timezone.localtime()
+
+    # ==========================================
+    # ACTIVATE SCHEDULED SESSIONS
+    # ==========================================
+
+    scheduled_sessions = AttendanceSession.objects.filter(
+        is_active=False,
+        start_time__lte=now,
+        end_time__gt=now
+    )
+
+    for session in scheduled_sessions:
+
+        session.is_active = True
+
+        session.save(
+            update_fields=["is_active"]
+        )
+
+
+    # ==========================================
+    # AUTO-CLOSE ACTIVE SESSIONS
+    # ==========================================
 
     active_sessions = AttendanceSession.objects.filter(
         is_active=True
@@ -1367,57 +1508,31 @@ def auto_close_expired_sessions():
 
     for session in active_sessions:
 
-        # ==============================
-        # POSTPONED / OVERRIDE SESSION
-        # ==============================
+        # AttendanceSession.end_time is the
+        # source of truth for BOTH normal
+        # and override sessions.
 
-        if session.is_override:
+        session_end = session.end_time
 
-            session_end = (
-                session.start_time +
-                timedelta(minutes=session.override_duration_minutes)
-
-            )
+        if not session_end:
+            continue
 
 
-        # ==============================
-        # NORMAL TIMETABLE SESSION
-        # ==============================
+        # Safety check:
+        # never process a session before
+        # its scheduled start time.
 
-        else:
-
-            timetable = session.timetable
-
-            if not timetable:
-                continue
+        if now < session.start_time:
+            continue
 
 
-            session_end = session.start_time.replace(
-                hour=timetable.end_time.hour,
-                minute=timetable.end_time.minute,
-                second=0,
-                microsecond=0
-            )
-
-
-            # Fix case where timetable end becomes before start
-            if session_end <= session.start_time:
-
-                session_end = (
-                    session.start_time +
-                    timedelta(hours=2)
-                )
-
-
-        # ==============================
+        # ==========================================
         # AUTO CLOSE
-        # ==============================
+        # ==========================================
 
         if now >= session_end:
 
             session.is_active = False
-
-            session.end_time = session_end
 
             session.ended_at = now
 
@@ -1446,7 +1561,8 @@ def auto_close_expired_sessions():
                         "Checkout is available for 10 minutes."
                     )
                 )
-                
+
+
     # ==========================================
     # AUTO-CLOSE STUDENTS WHO NEVER CHECKED OUT
     # ==========================================
@@ -1456,6 +1572,7 @@ def auto_close_expired_sessions():
         checkout_deadline__lt=now
     )
 
+
     for session in expired_sessions:
 
         open_attendance = Attendance.objects.filter(
@@ -1464,26 +1581,43 @@ def auto_close_expired_sessions():
             check_out_time__isnull=True
         )
 
+
         for attendance in open_attendance:
 
-            attendance.check_out_time = session.checkout_deadline
+            attendance.check_out_time = (
+                session.checkout_deadline
+            )
 
-            # Calculate how long the student attended
-            if attendance.check_in_time and session.start_time:
+
+            # ======================================
+            # CALCULATE ATTENDED TIME
+            # ======================================
+
+            if (
+                attendance.check_in_time
+                and session.start_time
+                and session.end_time
+            ):
 
                 session_duration = (
-                    session.end_time - session.start_time
+                    session.end_time -
+                    session.start_time
                 ).total_seconds()
+
 
                 attended_duration = (
                     attendance.check_out_time -
                     attendance.check_in_time
                 ).total_seconds()
 
+
                 if session_duration > 0:
 
                     attendance.attendance_percentage = min(
-                        (attended_duration / session_duration) * 100,
+                        (
+                            attended_duration /
+                            session_duration
+                        ) * 100,
                         100
                     )
 
@@ -1495,13 +1629,17 @@ def auto_close_expired_sessions():
 
                 attendance.attendance_percentage = 0
 
-            attendance.status = calculate_attendance_status(
-                attendance
+
+            attendance.status = (
+                calculate_attendance_status(
+                    attendance
+                )
             )
 
+
             attendance.save()
-            
-            
+
+
 # ======================================================
 # ATTENDANCE STATUS CALCULATION
 # ======================================================
@@ -1625,8 +1763,14 @@ def student_attendance_history(request):
             Use override_duration_minutes.
         """
 
-        if session.is_override:
-            return session.override_duration_minutes / 60
+        if session.start_time and session.end_time:
+
+            duration = (
+            session.end_time -
+            session.start_time
+            ).total_seconds() / 3600
+
+            return max(duration, 0)
 
         if session.timetable:
             start = session.timetable.start_time

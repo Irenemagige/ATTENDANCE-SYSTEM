@@ -9,6 +9,7 @@ import 'package:mobile_app/services/auth_service.dart';
 import 'package:mobile_app/features/notifications/presentation/notification_screen.dart';
 import 'package:mobile_app/features/attendance/presentation/screens/fingerprint_scan_screen.dart';
 import 'package:mobile_app/features/attendance/presentation/screens/attendance_history_screen.dart';
+import 'package:mobile_app/features/timetable/presentation/timetable_screen.dart';
 
 const _primary = Color(0xFF2563EB);
 const _primaryDark = Color(0xFF0F172A);
@@ -850,6 +851,7 @@ if (!identityVerified) {
         onCheckOut: startCheckOut,
         
       ),
+      const TimetableScreen(),
       const AttendanceHistoryScreen(),
       NotificationScreen(
       onNotificationsRead: () {
@@ -899,6 +901,10 @@ if (!identityVerified) {
           BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined),
             label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month_outlined),
+            label: 'Timetable',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.fact_check_outlined),
