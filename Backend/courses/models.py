@@ -59,17 +59,6 @@ class LecturerAssignment(models.Model):
 
     def __str__(self):
         return f"{self.lecturer.username} -> {self.subject.name}"
-
-
-# ========================
-# ENROLLMENT (STUDENTS)
-# ========================
-class Enrollment(models.Model):
-    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
-
-    def __str__(self):
-        return f"{self.student.username} enrolled in {self.subject.name}"
     
 
 class LecturerCourse(models.Model):

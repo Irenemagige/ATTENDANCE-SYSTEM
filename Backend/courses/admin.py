@@ -8,7 +8,6 @@ from .models import Classroom, BLEBeacon
 from courses.models import (
     Course,
     Department,
-    Enrollment,
     LecturerAssignment,
     LecturerCourse,
     LecturerSubject,
@@ -63,14 +62,6 @@ class LecturerAssignmentAdmin(GroupFilteredUserAdminMixin, admin.ModelAdmin):
     user_group_filters = {"lecturer": "Lecturer"}
     list_display = ("lecturer", "subject")
     search_fields = ("lecturer__username", "subject__name", "subject__code")
-    list_filter = ("subject__course",)
-
-
-@admin.register(Enrollment)
-class EnrollmentAdmin(GroupFilteredUserAdminMixin, admin.ModelAdmin):
-    user_group_filters = {"student": "Student"}
-    list_display = ("student", "subject")
-    search_fields = ("student__username", "subject__name", "subject__code")
     list_filter = ("subject__course",)
 
 
