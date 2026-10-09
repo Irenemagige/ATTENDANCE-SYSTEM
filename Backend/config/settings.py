@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import dj_database_url
 
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-+_ej_51%6@xq(s(p5l-rsug#j_go9=u082q!%9)g-zy-@r8a_)"
@@ -28,6 +29,7 @@ INSTALLED_APPS = [
     "courses",
     "students",
     "attendance",
+    "academic_calendar",
     "accounts.apps.AccountsConfig",
 ]
 
@@ -105,3 +107,5 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"

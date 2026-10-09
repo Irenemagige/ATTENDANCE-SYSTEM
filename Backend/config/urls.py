@@ -6,6 +6,9 @@ from accounts.views import api_root
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
+from django.conf import settings
+from django.conf.urls.static import static
+
 schema_view = get_schema_view(
     openapi.Info(
         title="Geofencing Attendance System API",
@@ -30,4 +33,14 @@ urlpatterns = [
     path("swagger/", schema_view.with_ui("swagger", cache_timeout=0), name="swagger-ui"),
     path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="redoc"),
     path("api/subjects/", include("courses.subject_urls")),
+    path(
+    "api/academic-calendar/",
+    include("academic_calendar.urls"),
+),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT,
+    )

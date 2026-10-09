@@ -9,6 +9,7 @@ from django.db.models import Count, Q
 
 
 from students.serializers import NotificationSerializer
+from academic_calendar.models import SemesterCalendar
 
 from accounts.models import UserSessionState
 from accounts.permissions import IsLecturer, IsStudent
@@ -22,13 +23,97 @@ from courses.models import (
 )
 
 
-from .models import AttendanceSession, Attendance, MovementLog
+from .models import AttendanceSession, Attendance, MovementLog,  SessionChangeHistory
 from .utils import calculate_distance
 
 
 
 def is_within_geofence(distance, radius):
     return distance <= radius
+
+
+MOVEMENT_SAMPLE_MAX_GAP_SECONDS = 30
+
+
+def calculate_movement_attendance(attendance):
+    """
+    Calculate verified attendance from consecutive movement samples.
+
+    Only intervals with two inside-geofence samples are counted.
+    Long gaps and time outside the actual session are not counted.
+    """
+    if not attendance.check_in_time:
+        return {
+            "attended_seconds": 0,
+            "percentage": 0.0,
+        }
+
+    session = attendance.session
+
+    if not session.start_time or not session.end_time:
+        return {
+            "attended_seconds": 0,
+            "percentage": 0.0,
+        }
+
+    session_start = session.start_time
+    session_end = session.end_time
+
+    # Never count time outside the real session or the student's
+    # own check-in/check-out window.
+    window_start = max(attendance.check_in_time, session_start)
+    window_end = min(
+        attendance.check_out_time or timezone.now(),
+        session_end,
+    )
+
+    if window_end <= window_start:
+        return {
+            "attended_seconds": 0,
+            "percentage": 0.0,
+        }
+
+    logs = list(
+        MovementLog.objects.filter(
+            student=attendance.student,
+            session=session,
+            timestamp__gte=window_start,
+            timestamp__lte=window_end,
+        ).order_by("timestamp", "id")
+    )
+
+    attended_seconds = 0
+
+    for previous, current in zip(logs, logs[1:]):
+        if not previous.inside_geofence or not current.inside_geofence:
+            continue
+
+        gap_seconds = (
+            current.timestamp - previous.timestamp
+        ).total_seconds()
+
+        if gap_seconds <= 0:
+            continue
+
+        if gap_seconds > MOVEMENT_SAMPLE_MAX_GAP_SECONDS:
+            continue
+
+        attended_seconds += gap_seconds
+
+    scheduled_seconds = (
+        session_end - session_start
+    ).total_seconds()
+
+    percentage = (
+        min(attended_seconds / scheduled_seconds * 100, 100.0)
+        if scheduled_seconds > 0
+        else 0.0
+    )
+
+    return {
+        "attended_seconds": attended_seconds,
+        "percentage": round(percentage, 2),
+    }
 
 # ======================================================
 # ACTIVE CLASS CHECK
@@ -64,7 +149,7 @@ def get_active_class():
 @api_view(["POST"])
 @permission_classes([IsLecturer])
 def start_session(request):
-    
+
     existing_session = AttendanceSession.objects.filter(
     lecturer=request.user,
     is_active=True
@@ -101,8 +186,8 @@ def start_session(request):
     override_end_time = request.data.get(
     "override_end_time"
     )
-    
-    
+
+
     # ==============================
 # CHECK TIMETABLE
 # ==============================
@@ -147,7 +232,7 @@ def start_session(request):
         },
         status=400
     )
-        
+
     if is_override and (
     not override_start_time or
     not override_end_time
@@ -162,7 +247,7 @@ def start_session(request):
 
     # Fixed, explicit values for the current demo environment.
     allowed_wifi = "ARUSOPASUANET"
-    
+
 
 
     if not course_id or not subject_id:
@@ -172,7 +257,7 @@ def start_session(request):
             },
             status=400
         )
-        
+
     if not classroom_id:
         return Response(
         {
@@ -180,7 +265,7 @@ def start_session(request):
         },
         status=400
     )
-        
+
     classroom = Classroom.objects.filter(
     id=classroom_id
     ).first()
@@ -247,9 +332,9 @@ def start_session(request):
                 },
                 status=403
             )
-            
+
     now = timezone.localtime()
-    
+
         # ==========================================
     # AMENDMENT 4: DAILY SESSION TIME RESTRICTION
     # ==========================================
@@ -277,7 +362,7 @@ def start_session(request):
             status=400
         )
 
-    
+
 
     if is_override:
 
@@ -300,7 +385,7 @@ def start_session(request):
                 },
                 status=400
             )
-            
+
                 # ==========================================
         # AMENDMENT 4: OVERRIDE TIME RESTRICTION
         # ==========================================
@@ -343,9 +428,19 @@ def start_session(request):
             ),
             timezone.get_current_timezone()
         )
+        if session_end_time <= now:
+            return Response(
+        {
+            "error": (
+                "The override end time has already passed. "
+                "Choose a future end time."
+            )
+        },
+        status=400
+    )
+
 
     else:
-
         session_start_time = now
 
         session_end_time = timezone.make_aware(
@@ -355,6 +450,37 @@ def start_session(request):
             ),
             timezone.get_current_timezone()
         )
+
+        # Normal timetable session cannot start after
+        # its scheduled end time.
+        if session_end_time <= now:
+            return Response(
+                {
+                    "error": (
+                        "This timetable session has already ended. "
+                        "Use override if this is a postponed or "
+                        "replacement class."
+                    )
+                },
+                status=400
+            )
+
+
+    scheduled_start_time = timezone.make_aware(
+        datetime.combine(
+            now.date(),
+            timetable.start_time
+        ),
+        timezone.get_current_timezone()
+    )
+
+    scheduled_end_time = timezone.make_aware(
+        datetime.combine(
+            now.date(),
+            timetable.end_time
+        ),
+        timezone.get_current_timezone()
+    )
 
     session = AttendanceSession.objects.create(
         lecturer=user,
@@ -375,7 +501,25 @@ def start_session(request):
         override_reason=override_reason,
         override_duration_minutes=120
     )
-    
+
+    SessionChangeHistory.objects.create(
+        session=session,
+        change_type=(
+            "OVERRIDE_STARTED"
+            if is_override
+            else "SESSION_STARTED"
+        ),
+        scheduled_start_time=scheduled_start_time,
+        scheduled_end_time=scheduled_end_time,
+        actual_start_time=session.start_time,
+        actual_end_time=session.end_time,
+        changed_by=user,
+        reason=(
+            override_reason or ""
+            if is_override
+            else ""
+        ),
+    )
     students = Student.objects.filter(
         course=session.course
     )
@@ -569,13 +713,25 @@ def check_in(request):
             )
 
     # Update existing ABSENT record
+
     attendance.status = "PRESENT"
     attendance.check_in_time = timezone.now()
     attendance.save()
-    
+
+# Record the student's initial verified location at check-in.
+    MovementLog.objects.create(
+    student=student,
+    session=session,
+    latitude=float(latitude),
+    longitude=float(longitude),
+    inside_geofence=True,
+)
+
+
+
     state.current_state = "CHECKED_IN"
     state.save()
-    
+
     Notification.objects.create(
     student=student,
     title="Check-in successful",
@@ -586,7 +742,7 @@ def check_in(request):
 
 
 
-    
+
 
 
 
@@ -601,10 +757,10 @@ def check_in(request):
             "distance": round(distance,2)
         }
     )
-    
-    
-    
-    
+
+
+
+
 # ======================================================
 # STUDENT CHECK OUT
 # ======================================================
@@ -663,7 +819,7 @@ def check_out(request):
 
 
     session = attendance.session
-    
+
     if not session:
         return Response(
         {
@@ -684,7 +840,7 @@ def check_out(request):
             },
             status=403
         )
-        
+
     if session.checkout_deadline and timezone.now() > session.checkout_deadline:
 
         return Response(
@@ -787,40 +943,21 @@ def check_out(request):
         status=403
     )
 
-
-
     checkout_time = timezone.now()
 
+# Save checkout time before calculating attendance.
     attendance.check_out_time = checkout_time
 
-    if attendance.check_in_time and session.start_time and session.end_time:
-        session_duration = (
-            session.end_time - session.start_time
-        ).total_seconds()
+# Calculate attendance using verified movement samples,
+# not simply the time between check-in and checkout.
+    movement_result = calculate_movement_attendance(attendance)
 
-        attended_duration = (
-            checkout_time - attendance.check_in_time
-        ).total_seconds()
-
-        if session_duration > 0:
-            percentage = min(
-                (attended_duration / session_duration) * 100,
-                100
-            )
-        else:
-            percentage = 0
-
-        attendance.attendance_percentage = round(
-            percentage,
-            2
-        )
-    else:
-        attendance.attendance_percentage = 0
+    attendance.attendance_percentage = movement_result["percentage"]
 
     if attendance.attendance_percentage < 80:
-        attendance.status = "PARTIAL_ATTENDANCE"
+       attendance.status = "PARTIAL_ATTENDANCE"
     else:
-        attendance.status = calculate_attendance_status(attendance)
+       attendance.status = calculate_attendance_status(attendance)
 
     attendance.save(
     update_fields=[
@@ -829,6 +966,8 @@ def check_out(request):
         "status",
     ]
 )
+
+
 
     percentage = attendance.attendance_percentage or 0
 
@@ -897,8 +1036,8 @@ def end_session(request):
     )
 
     session.save()
-    
-    
+
+
 
     students = Student.objects.filter(
         course=session.course
@@ -1177,7 +1316,7 @@ def session_report(request, session_id):
 @api_view(["GET"])
 @permission_classes([IsStudent])
 def active_session(request):
-    
+
     auto_close_expired_sessions()
 
     try:
@@ -1563,128 +1702,104 @@ def auto_close_expired_sessions():
                 )
 
 
+
     # ==========================================
     # AUTO-CLOSE STUDENTS WHO NEVER CHECKED OUT
     # ==========================================
 
     expired_sessions = AttendanceSession.objects.filter(
         is_active=False,
-        checkout_deadline__lt=now
+        checkout_deadline__lt=now,
     )
 
-
     for session in expired_sessions:
-
         open_attendance = Attendance.objects.filter(
             session=session,
             check_in_time__isnull=False,
-            check_out_time__isnull=True
+            check_out_time__isnull=True,
         )
 
-
         for attendance in open_attendance:
+            # Stop attendance at the actual session end.
+            attendance.check_out_time = session.end_time
 
-            attendance.check_out_time = (
-                session.checkout_deadline
+            # Use the same movement-based calculation as normal checkout.
+            movement_result = calculate_movement_attendance(
+                attendance
             )
 
-
-            # ======================================
-            # CALCULATE ATTENDED TIME
-            # ======================================
-
-            if (
-                attendance.check_in_time
-                and session.start_time
-                and session.end_time
-            ):
-
-                session_duration = (
-                    session.end_time -
-                    session.start_time
-                ).total_seconds()
-
-
-                attended_duration = (
-                    attendance.check_out_time -
-                    attendance.check_in_time
-                ).total_seconds()
-
-
-                if session_duration > 0:
-
-                    attendance.attendance_percentage = min(
-                        (
-                            attended_duration /
-                            session_duration
-                        ) * 100,
-                        100
-                    )
-
-                else:
-
-                    attendance.attendance_percentage = 0
-
-            else:
-
-                attendance.attendance_percentage = 0
-
-
-            attendance.status = (
-                calculate_attendance_status(
-                    attendance
-                )
+            attendance.attendance_percentage = (
+                movement_result["percentage"]
             )
 
+            attendance.status = calculate_attendance_status(
+                attendance
+            )
 
-            attendance.save()
-
+            attendance.save(
+                update_fields=[
+                    "check_out_time",
+                    "attendance_percentage",
+                    "status",
+                ]
+            )
 
 # ======================================================
 # ATTENDANCE STATUS CALCULATION
 # ======================================================
 
 def calculate_attendance_status(attendance):
-
-
     if not attendance.check_in_time:
+        return "ABSENT"
 
-        return "INVALID_ATTEMPT"
+    # Attendance below 80% is always partial.
+    if (attendance.attendance_percentage or 0) < 80:
+        return "PARTIAL_ATTENDANCE"
 
+    session_start = attendance.session.start_time if attendance.session else None
 
-
-    if attendance.attendance_percentage >= 80:
-
-
-        grace_time = (
-
-            attendance.session.start_time +
-
-            timedelta(minutes=15)
-
-        )
-
-
+    if session_start:
+        grace_time = session_start + timedelta(minutes=30)
 
         if attendance.check_in_time > grace_time:
-
             return "LATE"
 
+    return "PRESENT"
 
-
-        return "PRESENT"
-
-
-
-    return "PARTIAL_ATTENDANCE"
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def location_update(request):
+    try:
+        student = Student.objects.get(user=request.user)
+    except Student.DoesNotExist:
+        return Response(
+            {"error": "Student profile not found"},
+            status=404
+        )
 
-    student = Student.objects.get(
-        user=request.user
-    )
+    # Validate GPS coordinates before calculating distance.
+    try:
+        latitude = float(request.data.get("latitude"))
+        longitude = float(request.data.get("longitude"))
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "Valid latitude and longitude are required"},
+            status=400
+        )
+
+    import math
+
+    if (
+        not math.isfinite(latitude)
+        or not math.isfinite(longitude)
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        return Response(
+            {"error": "GPS coordinates are invalid"},
+            status=400
+        )
 
     attendance = (
         Attendance.objects
@@ -1700,28 +1815,37 @@ def location_update(request):
 
     if not attendance:
         return Response(
-            {
-                "message": "No open attendance record"
-            },
+            {"message": "No open attendance record"},
             status=400
         )
 
     session = attendance.session
+    now = timezone.now()
+
+    # Never record movement after the actual session end.
+    if not session.end_time or now >= session.end_time:
+        return Response(
+            {"error": "The session has ended. Movement recording is closed."},
+            status=403
+        )
 
     distance = calculate_distance(
-        request.data.get("latitude"),
-        request.data.get("longitude"),
+        latitude,
+        longitude,
         session.latitude,
         session.longitude
     )
 
     inside_geofence = distance <= session.radius_meters
 
+    # Store the GPS evidence. The server determines geofence status.
+    # Wi-Fi/beacon flags are retained for compatibility but are not
+    # considered proof of attendance by the scoring helper.
     MovementLog.objects.create(
         student=student,
         session=session,
-        latitude=request.data.get("latitude"),
-        longitude=request.data.get("longitude"),
+        latitude=latitude,
+        longitude=longitude,
         inside_geofence=inside_geofence,
         wifi_valid=request.data.get("wifi_valid", False),
         beacon_valid=request.data.get("beacon_valid", False)
@@ -1730,10 +1854,10 @@ def location_update(request):
     return Response({
         "message": "Movement recorded",
         "inside_geofence": inside_geofence,
-        "distance_meters": distance,
+        "distance_meters": round(distance, 2),
     })
-    
-    
+
+
 @api_view(['GET'])
 def student_attendance_history(request):
     user = request.user
@@ -1752,25 +1876,21 @@ def student_attendance_history(request):
         "session__start_time",
     )
 
+
     def get_scheduled_hours(session):
         """
-        Get the scheduled duration of a session in hours.
+        Return the scheduled duration in hours.
 
-        Normal session:
-            Use the timetable start and end time.
-
-        Override session:
-            Use override_duration_minutes.
+        Override sessions use their configured duration.
+        Normal sessions use their timetable duration.
+        Actual session times are a fallback only.
         """
 
-        if session.start_time and session.end_time:
-
-            duration = (
-            session.end_time -
-            session.start_time
-            ).total_seconds() / 3600
-
-            return max(duration, 0)
+        if session.is_override:
+            return max(
+                (session.override_duration_minutes or 0) / 60,
+                0,
+            )
 
         if session.timetable:
             start = session.timetable.start_time
@@ -1780,15 +1900,16 @@ def student_attendance_history(request):
                 start_minutes = start.hour * 60 + start.minute
                 end_minutes = end.hour * 60 + end.minute
 
-                # Handle a timetable that crosses midnight
                 if end_minutes <= start_minutes:
                     end_minutes += 24 * 60
 
-                duration_minutes = end_minutes - start_minutes
-                return duration_minutes / 60
+                return max(
+                    (end_minutes - start_minutes) / 60,
+                    0,
+                )
 
-        # Fallback if there is no timetable
-        if session.end_time and session.start_time:
+        # Fallback when timetable information is unavailable.
+        if session.start_time and session.end_time:
             duration = (
                 session.end_time - session.start_time
             ).total_seconds() / 3600
@@ -1799,34 +1920,26 @@ def student_attendance_history(request):
 
     def get_attended_hours(attendance):
         """
-        Calculate how many hours the student actually attended
-        for this individual session.
+        Return verified movement-based attendance hours
+        for an individual session.
         """
 
         if not attendance.check_in_time:
             return 0
 
-        # If the student checked out normally
-        if attendance.check_out_time:
-            attended_seconds = (
-                attendance.check_out_time
-                - attendance.check_in_time
-            ).total_seconds()
+        movement_result = calculate_movement_attendance(attendance)
+        attended_seconds = movement_result["attended_seconds"]
 
-            return max(attended_seconds / 3600, 0)
+        return max(attended_seconds / 3600, 0)
 
-        # No checkout means no confirmed attended duration
-        return 0
 
     def calculate_subject_percentage(subject, current_session):
         """
-        Calculate cumulative subject attendance up to this session.
+        Calculate subject attendance using eligible timetable hours
+        within the saved semester teaching period.
 
-        Formula:
-
-            Total attended hours
-            -------------------- × 100
-            Total scheduled hours
+        For testing sessions outside the teaching period, retain the
+        existing session-based calculation.
         """
 
         subject_records = attendance_records.filter(
@@ -1834,30 +1947,154 @@ def student_attendance_history(request):
             session__date__lte=current_session.date,
         )
 
-        total_scheduled_hours = 0
-        total_attended_hours = 0
+        def legacy_percentage():
+            total_scheduled = 0
+            total_attended = 0
 
-        for subject_record in subject_records:
-            session = subject_record.session
+            for record in subject_records:
+                scheduled = get_scheduled_hours(record.session)
+                attended = get_attended_hours(record)
 
-            scheduled_hours = get_scheduled_hours(session)
-            attended_hours = get_attended_hours(subject_record)
+                total_scheduled += scheduled
+                total_attended += min(attended, scheduled)
 
-            total_scheduled_hours += scheduled_hours
-            total_attended_hours += min(
-                attended_hours,
-                scheduled_hours
+            if total_scheduled <= 0:
+                return 0
+
+            return round(
+                min(total_attended / total_scheduled * 100, 100),
+                2,
             )
 
-        if total_scheduled_hours == 0:
-            return 0
+        calendar = None
 
-        percentage = (
-            total_attended_hours
-            / total_scheduled_hours
-        ) * 100
+        if current_session.date:
+            calendar = SemesterCalendar.objects.filter(
+                teaching_start_date__isnull=False,
+                teaching_end_date__isnull=False,
+                teaching_start_date__lte=current_session.date,
+                teaching_end_date__gte=current_session.date,
+            ).first()
 
-        return round(min(percentage, 100), 2)
+            # Preserve the existing calculation if no usable calendar
+            # exists or this is a testing session outside the teaching dates.
+            if (
+                not calendar
+                or not current_session.date
+                or current_session.date < calendar.teaching_start_date
+            ):
+                return legacy_percentage()
+
+            end_date = min(
+                current_session.date,
+                calendar.teaching_end_date,
+            )
+
+            excluded_dates = set()
+
+            excluded_period_types = {
+                "BREAK",
+                "REVISION",
+                "EXAM",
+                "OTHER",
+            }
+
+            for period in calendar.periods.filter(
+                period_type__in=excluded_period_types,
+            ):
+                period_date = max(
+                    period.start_date,
+                    calendar.teaching_start_date,
+                )
+                period_end = min(
+                    period.end_date,
+                    calendar.teaching_end_date,
+                )
+
+                while period_date <= period_end:
+                    excluded_dates.add(period_date)
+                    period_date += timedelta(days=1)
+
+            timetables = Timetable.objects.filter(
+                course=student.course,
+                subject=subject,
+            )
+
+            # If no matching timetable exists, retain the old calculation
+            # rather than incorrectly returning zero.
+            if not timetables.exists():
+                return legacy_percentage()
+
+            total_scheduled_hours = 0
+            total_attended_hours = 0
+
+            # Generate eligible scheduled hours from recurring timetable
+            # entries, from the teaching start through the current session.
+            scheduled_date = calendar.teaching_start_date
+
+            while scheduled_date <= end_date:
+                if scheduled_date not in excluded_dates:
+                    day_code = scheduled_date.strftime("%a").upper()[:3]
+
+                    for timetable in timetables:
+                        if timetable.day != day_code:
+                            continue
+
+                        start = timetable.start_time
+                        end = timetable.end_time
+
+                        if not start or not end:
+                            continue
+
+                        start_minutes = start.hour * 60 + start.minute
+                        end_minutes = end.hour * 60 + end.minute
+
+                        if end_minutes <= start_minutes:
+                            end_minutes += 24 * 60
+
+                        duration_hours = (
+                            end_minutes - start_minutes
+                        ) / 60
+
+                        total_scheduled_hours += duration_hours
+
+                scheduled_date += timedelta(days=1)
+
+            # Count attended time only for records on eligible teaching dates.
+            for record in subject_records:
+                session_date = record.session.date
+
+                if not session_date:
+                    continue
+
+                if not (
+                    calendar.teaching_start_date
+                    <= session_date
+                    <= end_date
+                ):
+                    continue
+
+                if session_date in excluded_dates:
+                    continue
+
+                scheduled_hours = get_scheduled_hours(record.session)
+                attended_hours = get_attended_hours(record)
+
+                total_attended_hours += min(
+                    attended_hours,
+                    scheduled_hours,
+                )
+
+            if total_scheduled_hours <= 0:
+                return legacy_percentage()
+
+            percentage = (
+                total_attended_hours / total_scheduled_hours
+            ) * 100
+
+            return round(min(percentage, 100), 2)
+
+        return legacy_percentage()
 
     # ---------------------------------------------------------
     # CURRENT OVERALL ATTENDANCE
@@ -1969,7 +2206,7 @@ def student_attendance_history(request):
 
         "history": history,
     })
-    
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def notifications(request):

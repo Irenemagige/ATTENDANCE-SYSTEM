@@ -57,7 +57,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     _sessionTimer = Timer.periodic(const Duration(seconds: 15), (_) {
     _loadInitialData();
   });
-    
+
   }
 
   @override
@@ -72,7 +72,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     if (state == AppLifecycleState.resumed) {
       _loadInitialData();
     }
-    
+
   }
 
   @override
@@ -101,19 +101,21 @@ class _MainShellScreenState extends State<MainShellScreen>
     await refreshSessionStatus(showSnack: false);
     await evaluateSecurity();
 
-    if (attendanceState == AttendanceFlowState.checkedIn &&
-      activeSession?['session_active'] == true &&
-      securitySnapshot != null) {
-    await attendanceService.updateLocation(
-      latitude: securitySnapshot!.latitude,
-      longitude: securitySnapshot!.longitude,
-    );
-  }
+
+if (attendanceState == AttendanceFlowState.checkedIn &&
+    (activeSession?['session_active'] == true ||
+        activeSession?['can_check_out'] == true) &&
+    securitySnapshot != null) {
+  await attendanceService.updateLocation(
+    latitude: securitySnapshot!.latitude,
+    longitude: securitySnapshot!.longitude,
+  );
+}
 
     await loadAttendanceStats();
     await loadUnreadNotificationCount();
-  
-    
+
+
 
     if (mounted) {
     setState(() => isLoading = false);
@@ -158,7 +160,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   });
 }
 
-  
+
   Future<void> evaluateSecurity() async {
   if (!mounted) return;
 
@@ -849,7 +851,7 @@ if (!identityVerified) {
         onFingerprint: openFingerprintScan,
         onCheckIn: startCheckIn,
         onCheckOut: startCheckOut,
-        
+
       ),
       const TimetableScreen(),
       const AttendanceHistoryScreen(),
@@ -980,7 +982,7 @@ class HomeTab extends StatelessWidget {
   }) onFingerprint;
   final VoidCallback onCheckIn;
   final VoidCallback onCheckOut;
-  
+
 
   @override
   Widget build(BuildContext context) {
@@ -995,7 +997,7 @@ class HomeTab extends StatelessWidget {
         ? Colors.green
         : Colors.redAccent;
 
-    
+
 
     return RefreshIndicator(
       onRefresh: onRefresh,
