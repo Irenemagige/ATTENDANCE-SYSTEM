@@ -217,38 +217,53 @@ def start_session(request):
     if not timetable and not is_override:
 
         return Response(
-        {
-            "error": "No timetable found. Use override with reason if this is a postponed/replacement class."
-        },
-        status=400
-    )
+            {
+                "error": "No timetable found. Use override with reason if this is a postponed/replacement class."
+            },
+            status=400
+        )
 
+    # Reject normal sessions outside the scheduled timetable period.
+    now = timezone.localtime()
+    current_time = now.time()
+
+    if timetable and not is_override:
+        if not (timetable.start_time <= current_time < timetable.end_time):
+            return Response(
+                {
+                    "error": (
+                        f"This class is scheduled from "
+                        f"{timetable.start_time.strftime('%H:%M')} to "
+                        f"{timetable.end_time.strftime('%H:%M')}. "
+                        "You cannot start attendance outside this period."
+                    )
+                },
+                status=400
+            )
 
     if is_override and not override_reason:
 
         return Response(
-        {
-            "error": "Override reason is required"
-        },
-        status=400
-    )
+            {
+                "error": "Override reason is required"
+            },
+            status=400
+        )
 
     if is_override and (
-    not override_start_time or
-    not override_end_time
+        not override_start_time or
+        not override_end_time
     ):
 
         return Response(
-        {
-            "error": "Override start time and end time are required"
-        },
-        status=400
+            {
+                "error": "Override start time and end time are required"
+            },
+            status=400
         )
 
     # Fixed, explicit values for the current demo environment.
     allowed_wifi = "ARUSOPASUANET"
-
-
 
     if not course_id or not subject_id:
         return Response(
@@ -260,24 +275,23 @@ def start_session(request):
 
     if not classroom_id:
         return Response(
-        {
-            "error":"classroom_id is required"
-        },
-        status=400
-    )
+            {
+                "error": "classroom_id is required"
+            },
+            status=400
+        )
 
     classroom = Classroom.objects.filter(
-    id=classroom_id
+        id=classroom_id
     ).first()
-
 
     if not classroom:
         return Response(
-        {
-            "error":"Invalid classroom"
-        },
-        status=400
-    )
+            {
+                "error": "Invalid classroom"
+            },
+            status=400
+        )
 
 
     # Lecturer course permission
@@ -412,6 +426,16 @@ def start_session(request):
                 },
                 status=400
             )
+        if not (override_start <= current_time < override_end):
+            return Response(
+           {
+            "error": (
+                "The current time is outside the approved override "
+                "period. Attendance cannot be started."
+            )
+            },
+        status=400
+    )
 
         session_start_time = timezone.make_aware(
             datetime.combine(
@@ -466,21 +490,25 @@ def start_session(request):
             )
 
 
-    scheduled_start_time = timezone.make_aware(
-        datetime.combine(
-            now.date(),
-            timetable.start_time
-        ),
-        timezone.get_current_timezone()
-    )
+    if timetable:
+        scheduled_start_time = timezone.make_aware(
+            datetime.combine(
+                now.date(),
+                timetable.start_time
+            ),
+            timezone.get_current_timezone()
+        )
 
-    scheduled_end_time = timezone.make_aware(
-        datetime.combine(
-            now.date(),
-            timetable.end_time
-        ),
-        timezone.get_current_timezone()
-    )
+        scheduled_end_time = timezone.make_aware(
+            datetime.combine(
+                now.date(),
+                timetable.end_time
+            ),
+            timezone.get_current_timezone()
+        )
+    else:
+        scheduled_start_time = session_start_time
+        scheduled_end_time = session_end_time
 
     session = AttendanceSession.objects.create(
         lecturer=user,
