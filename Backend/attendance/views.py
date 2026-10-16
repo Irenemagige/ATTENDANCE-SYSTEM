@@ -989,7 +989,7 @@ def check_out(request):
 
     attendance.attendance_percentage = movement_result["percentage"]
 
-    if attendance.attendance_percentage < 80:
+    if attendance.attendance_percentage < 50:
        attendance.status = "PARTIAL_ATTENDANCE"
     else:
        attendance.status = calculate_attendance_status(attendance)
@@ -1776,8 +1776,8 @@ def calculate_attendance_status(attendance):
     if not attendance.check_in_time:
         return "ABSENT"
 
-    # Attendance below 80% is always partial.
-    if (attendance.attendance_percentage or 0) < 80:
+    # Attendance below 50% is always partial.
+    if (attendance.attendance_percentage or 0) < 50:
         return "PARTIAL_ATTENDANCE"
 
     session_start = attendance.session.start_time if attendance.session else None
@@ -2151,21 +2151,11 @@ def student_attendance_history(request):
 
         return legacy_percentage()
 
-    # ---------------------------------------------------------
-    # CURRENT OVERALL ATTENDANCE
-    # ---------------------------------------------------------
+   # ---------------------------------------------------------
+# CURRENT OVERALL ATTENDANCE
+# ---------------------------------------------------------
 
     total_sessions = attendance_records.count()
-
-    overall_percentage = 0
-
-    if total_sessions > 0:
-        total_percentage = sum(
-            float(record.attendance_percentage or 0)
-            for record in attendance_records
-        )
-
-        overall_percentage = total_percentage / total_sessions
 
     # ---------------------------------------------------------
     # SUBJECT PERFORMANCE
@@ -2199,6 +2189,19 @@ def student_attendance_history(request):
             "subject": subject.name,
             "percentage": percentage,
         })
+        
+    # Overall percentage = average of subject percentages
+    overall_percentage = (
+    round(
+        sum(
+            item["percentage"]
+            for item in subject_performance
+        ) / len(subject_performance),
+        2,
+    )
+    if subject_performance
+    else 0
+)
 
     # ---------------------------------------------------------
     # ATTENDANCE HISTORY
