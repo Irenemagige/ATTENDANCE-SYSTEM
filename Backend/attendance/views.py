@@ -1620,24 +1620,32 @@ def active_session(request):
     # =========================================================
     # 4. NO ACTIVE SESSION
     # =========================================================
-
     if completed:
-
         return Response({
-        "session_exists": False,
+            "session_exists": False,
+            "session_id": completed.session.id,
 
-        "attendance_state": "CHECKED_OUT",
+            "session_active": False,
+            "session_ended": True,
 
-        "checked_in": False,
-        "checked_out": True,
+            "course": completed.session.course.name,
+            "subject": completed.session.subject.name,
 
-        "can_check_in": False,
-        "can_check_out": False,
+            "attendance_state": "CHECKED_OUT",
+            "checked_in": True,
+            "checked_out": True,
 
-        "percentage": completed.attendance_percentage,
+            "can_check_in": False,
+            "can_check_out": False,
 
-        "message": "Attendance already completed"
-    })
+            "percentage": round(
+                float(completed.attendance_percentage or 0), 2
+            ),
+            "attendance_status": completed.status,
+
+            "message": "Attendance already completed",
+        })
+
 
     return Response({
         "session_exists": False,

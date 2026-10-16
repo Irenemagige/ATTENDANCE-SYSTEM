@@ -986,6 +986,11 @@ class HomeTab extends StatelessWidget {
     final statusLabel = _sessionStatusLabel(activeSession);
     final statusColor = _sessionStatusColor(statusLabel);
     final attendancePercent = _asDouble(stats?['percentage']);
+    final sessionAttendancePercent =
+    activeSession?['checked_out'] == true &&
+            activeSession?['percentage'] != null
+        ? _asDouble(activeSession?['percentage'])
+        : null;
     final attendanceStatus =
         stats?['status']?.toString() ??
         (attendancePercent >= 75 ? 'Fine' : 'Critical');
@@ -1042,7 +1047,9 @@ class HomeTab extends StatelessWidget {
                     Expanded(
                       child: _SummaryTile(
                         label: 'Attendance',
-                        value: '${attendancePercent.toStringAsFixed(1)}%',
+                        value: sessionAttendancePercent == null
+    ? 'Pending'
+    : '${sessionAttendancePercent.toStringAsFixed(1)}%',
                         accent: attendanceColor,
                       ),
                     ),
@@ -1053,10 +1060,11 @@ class HomeTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _AttendanceStatsCard(
-            stats: stats,
-            status: attendanceStatus,
-            color: attendanceColor,
-          ),
+          stats: stats,
+          status: attendanceStatus,
+          color: attendanceColor,
+          sessionAttendancePercent: sessionAttendancePercent,
+       ),
           const SizedBox(height: 12),
           _SessionCard(
             session: activeSession,
@@ -1211,10 +1219,14 @@ class _AttendanceStatsCard extends StatelessWidget {
     required this.stats,
     required this.status,
     required this.color,
+    required this.sessionAttendancePercent,
   });
+
   final Map<String, dynamic>? stats;
   final String status;
   final Color color;
+  final double? sessionAttendancePercent;
+
   @override
   Widget build(BuildContext context) {
     return _GlassCard(
@@ -1224,8 +1236,17 @@ class _AttendanceStatsCard extends StatelessWidget {
       child: Column(
         children: [
           _MetricRow(
-            label: 'Attendance Percentage',
-            value: '${_asDouble(stats?['percentage']).toStringAsFixed(1)}%',
+  label: 'Session Attendance Percentage',
+  value: sessionAttendancePercent == null
+      ? 'Pending'
+      : '${sessionAttendancePercent!.toStringAsFixed(1)}%',
+  valueColor: color,
+),
+          _MetricRow(
+            label: 'Session Attendance',
+            value: sessionAttendancePercent == null
+                ? 'Pending'
+                : '${sessionAttendancePercent!.toStringAsFixed(1)}%',
             valueColor: color,
           ),
           _MetricRow(label: 'Status', value: status, valueColor: color),
