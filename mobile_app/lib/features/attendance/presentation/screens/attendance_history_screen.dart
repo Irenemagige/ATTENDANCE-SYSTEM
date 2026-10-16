@@ -375,100 +375,72 @@ class _AttendanceHistoryScreenState
 
 
             Card(
-
-              child: Column(
-
-                children:
-
-                List.generate(
-
-                  recent.length,
-
-                  (index){
-
-
-                    final attendance =
-                        recent[index];
-
-
-
-                    final status =
-                        attendance['status']
-                            .toString();
-
-
-
-                    return ListTile(
-  title: Text(
-    attendance['subject'].toString(),
-  ),
-
-  subtitle: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        attendance['date'].toString(),
-      ),
-
-      const SizedBox(height: 6),
-
-      Text(
-        "Session Attendance: "
-        "${attendance['attendance_percentage']}% — "
-        "${status.replaceAll('_', ' ')}",
-      ),
-
-      const SizedBox(height: 4),
-
-      Text(
-        "Subject Attendance: "
-        "${attendance['subject_attendance_percentage']}%",
-      ),
-
-      const SizedBox(height: 4),
-
-    ],
-  ),
-
-  trailing: Text(
-    status.replaceAll('_', ' '),
-    style: TextStyle(
-      fontWeight: FontWeight.bold,
-
-      color: status == "PRESENT"
-          ? Colors.green
-          : status == "LATE"
-              ? Colors.orange
-              : Colors.red,
-    ),
-  ),
-);
-
-
-                  },
-
-                ),
-
-              ),
-
+  child: recent.isEmpty
+      ? const Padding(
+          padding: EdgeInsets.all(20),
+          child: Center(
+            child: Text(
+              "No finalized attendance records yet.",
+              textAlign: TextAlign.center,
             ),
+          ),
+        )
+      : Column(
+          children: List.generate(
+            recent.length,
+            (index) {
+              final attendance = recent[index];
 
+              final status =
+                  attendance['status'].toString();
 
-
-          ],
-
+              return ListTile(
+                title: Text(
+                  attendance['subject'].toString(),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      attendance['date'].toString(),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Session Attendance: "
+                      "${attendance['attendance_percentage']}% — "
+                      "${status.replaceAll('_', ' ')}",
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Subject Attendance: "
+                      "${attendance['subject_attendance_percentage']}%",
+                    ),
+                  ],
+                ),
+                trailing: Text(
+                  status.replaceAll('_', ' '),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: status == "PRESENT"
+                        ? Colors.green
+                        : status == "LATE"
+                            ? Colors.orange
+                            : Colors.red,
+                  ),
+                ),
+              );
+            },
+          ),
         ),
-
       ),
-
+          ],
+        ),
+      ),
     );
-
-
   }
 
-}
-
-     String formatTime(dynamic value) {
+  String formatTime(dynamic value) {
   if (value == null) {
     return '-';
   }
@@ -488,4 +460,6 @@ class _AttendanceHistoryScreenState
       dateTime.minute.toString().padLeft(2, '0');
 
   return '$hour:$minute';
+}
+
 }

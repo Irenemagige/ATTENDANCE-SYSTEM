@@ -118,13 +118,13 @@ class AttendanceSession(models.Model):
 class Attendance(models.Model):
 
     STATUS_CHOICES = [
+    ("IN_PROGRESS", "In Progress"),
     ("PRESENT", "Present"),
     ("LATE", "Late"),
     ("PARTIAL_ATTENDANCE", "Partial Attendance"),
     ("INVALID_ATTEMPT", "Invalid Attempt"),
     ("ABSENT", "Absent"),
-    
-    ]
+]
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
     session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE)
@@ -133,10 +133,10 @@ class Attendance(models.Model):
     check_out_time = models.DateTimeField(null=True, blank=True)
 
     status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default="PRESENT"
-    )
+    max_length=20,
+    choices=STATUS_CHOICES,
+    default="IN_PROGRESS",
+)
     attendance_percentage = models.DecimalField(
     max_digits=5,
     decimal_places=2,

@@ -732,6 +732,7 @@ if (!identityVerified) {
 }
 
 
+
   Future<void> loadUnreadNotificationCount() async {
   final token = await StorageService.getAccessToken();
 
@@ -748,14 +749,9 @@ if (!identityVerified) {
 
     final count = data['unread_count'] ?? 0;
 
-    // If the user has already opened notifications,
-    // do not bring back the old unread count.
-    if (_notificationsOpened && count > 0) {
-      return;
-    }
-
     setState(() {
-      unreadNotificationCount = count;
+      unreadNotificationCount =
+          count is int ? count : int.tryParse(count.toString()) ?? 0;
     });
   }
 }

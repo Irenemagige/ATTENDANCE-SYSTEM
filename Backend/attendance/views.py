@@ -719,32 +719,39 @@ def check_in(request):
             },
             status=403
         )
-
+    check_in_time = timezone.now()
     attendance, created = Attendance.objects.get_or_create(
-    student=student,
-    session=session,
-    defaults={
-        "status": "PRESENT",
-        "check_in_time": timezone.now()
-    }
-)
+        student=student,
+        session=session,
+        defaults={
+            "status": "IN_PROGRESS",
+            "check_in_time": check_in_time,
+            "attendance_percentage": 0,
+        },
+    )
+
+    if not created and attendance.check_in_time:
+        return Response(
+            {"error": "Already checked in"},
+            status=400,
+        )
+
+    # Keep the record unfinished until checkout or auto-finalization.
+    attendance.status = "IN_PROGRESS"
+    attendance.check_in_time = check_in_time
+    attendance.check_out_time = None
+    attendance.attendance_percentage = 0
+
+    attendance.save(
+        update_fields=[
+            "status",
+            "check_in_time",
+            "check_out_time",
+            "attendance_percentage",
+        ]
+    )
 
 
-    if not created:
-
-        if attendance.check_in_time:
-            return Response(
-              {
-                "error": "Already checked in"
-            },
-            status=400
-            )
-
-    # Update existing ABSENT record
-
-    attendance.status = "PRESENT"
-    attendance.check_in_time = timezone.now()
-    attendance.save()
 
 # Record the student's initial verified location at check-in.
     MovementLog.objects.create(
@@ -1642,83 +1649,69 @@ def active_session(request):
         "message": "No active attendance session available",
     })
 
-def auto_close_expired_sessions():
 
+def auto_close_expired_sessions():
     now = timezone.localtime()
 
-    # ==========================================
-    # ACTIVATE SCHEDULED SESSIONS
-    # ==========================================
-
+    # 1. Activate sessions that have reached their scheduled start.
     scheduled_sessions = AttendanceSession.objects.filter(
         is_active=False,
         start_time__lte=now,
-        end_time__gt=now
+        end_time__gt=now,
     )
 
     for session in scheduled_sessions:
-
         session.is_active = True
+        session.save(update_fields=["is_active"])
 
-        session.save(
-            update_fields=["is_active"]
-        )
-
-
-    # ==========================================
-    # AUTO-CLOSE ACTIVE SESSIONS
-    # ==========================================
-
+    # 2. Close active sessions when their actual end time is reached.
     active_sessions = AttendanceSession.objects.filter(
         is_active=True
     )
 
     for session in active_sessions:
-
-        # AttendanceSession.end_time is the
-        # source of truth for BOTH normal
-        # and override sessions.
-
         session_end = session.end_time
 
         if not session_end:
             continue
 
-
-        # Safety check:
-        # never process a session before
-        # its scheduled start time.
-
         if now < session.start_time:
             continue
 
-
-        # ==========================================
-        # AUTO CLOSE
-        # ==========================================
-
         if now >= session_end:
-
             session.is_active = False
-
             session.ended_at = now
-
             session.auto_closed = True
-
             session.checkout_deadline = (
-                now + timedelta(minutes=10)
+                session_end + timedelta(minutes=10)
             )
 
-            session.save()
+            session.save(
+                update_fields=[
+                    "is_active",
+                    "ended_at",
+                    "auto_closed",
+                    "checkout_deadline",
+                ]
+            )
 
-
+            # Create ABSENT records for students who never checked in.
             students = Student.objects.filter(
                 course=session.course
             )
 
-
             for student in students:
+                Attendance.objects.get_or_create(
+                    student=student,
+                    session=session,
+                    defaults={
+                        "status": "ABSENT",
+                        "attendance_percentage": 0,
+                    },
+                )
 
+            # Notify students that the session ended.
+            for student in students:
                 Notification.objects.create(
                     student=student,
                     title="Session automatically ended",
@@ -1726,18 +1719,13 @@ def auto_close_expired_sessions():
                         f"{session.subject.name} session "
                         "was automatically closed. "
                         "Checkout is available for 10 minutes."
-                    )
+                    ),
                 )
 
-
-
-    # ==========================================
-    # AUTO-CLOSE STUDENTS WHO NEVER CHECKED OUT
-    # ==========================================
-
+    # 3. Finalize checked-in students who missed checkout.
     expired_sessions = AttendanceSession.objects.filter(
         is_active=False,
-        checkout_deadline__lt=now,
+        checkout_deadline__lte=now,
     )
 
     for session in expired_sessions:
@@ -1748,10 +1736,9 @@ def auto_close_expired_sessions():
         )
 
         for attendance in open_attendance:
-            # Stop attendance at the actual session end.
+            # Do not count the additional 10-minute checkout period.
             attendance.check_out_time = session.end_time
 
-            # Use the same movement-based calculation as normal checkout.
             movement_result = calculate_movement_attendance(
                 attendance
             )
@@ -1771,6 +1758,7 @@ def auto_close_expired_sessions():
                     "status",
                 ]
             )
+
 
 # ======================================================
 # ATTENDANCE STATUS CALCULATION
@@ -1891,17 +1879,48 @@ def student_attendance_history(request):
     user = request.user
     student = Student.objects.get(user=user)
 
-    # Get this student's attendance records
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def student_attendance_history(request):
+    auto_close_expired_sessions()
+
+    user = request.user
+
+    try:
+        student = Student.objects.get(user=user)
+    except Student.DoesNotExist:
+        return Response(
+            {"error": "Student profile not found"},
+            status=404,
+        )
+
+    # Keep your existing finalized attendance_records queryset
+    # and the rest of the history calculation below.
+
+    # Return only finalized attendance records.
+# A checked-in student is not finalized until checkout or
+# automatic finalization has set check_out_time.
+# A student who never checked in becomes finalized as absent
+# once the session has ended.
     attendance_records = Attendance.objects.filter(
-        student=student
+    Q(
+        check_in_time__isnull=False,
+        check_out_time__isnull=False,
+    )
+    | Q(
+        check_in_time__isnull=True,
+        session__is_active=False,
+    ),
+    student=student,
     ).select_related(
-        "session",
-        "session__subject",
-        "session__course",
-        "session__timetable",
+    "session",
+    "session__subject",
+    "session__course",
+    "session__timetable",
     ).order_by(
-        "session__date",
-        "session__start_time",
+    "session__date",
+    "session__start_time",
     )
 
 
