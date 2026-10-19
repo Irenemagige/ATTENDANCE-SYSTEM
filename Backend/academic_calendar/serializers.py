@@ -14,13 +14,25 @@ class SemesterCalendarSerializer(serializers.ModelSerializer):
             "academic_year",
             "semester",
             "document",
+            "teaching_start_date",
+            "teaching_end_date",
+            "is_finalized",
+            "finalized_at",
+            "finalized_by",
             "uploaded_by",
             "uploaded_at",
         ]
-        read_only_fields = ["id", "uploaded_by", "uploaded_at"]
+        read_only_fields = [
+            "id",
+            "is_finalized",
+            "finalized_at",
+            "finalized_by",
+            "uploaded_by",
+            "uploaded_at",
+        ]
 
     def validate_document(self, value):
-        max_size = 10 * 1024 * 1024  # 10 MB
+        max_size = 10 * 1024 * 1024
 
         if value.size > max_size:
             raise serializers.ValidationError(
