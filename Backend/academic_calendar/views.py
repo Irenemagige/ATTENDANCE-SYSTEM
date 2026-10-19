@@ -1,5 +1,7 @@
+from django.urls import path
 
 from datetime import datetime, timedelta
+
 
 from django.utils import timezone
 from rest_framework import generics, status
@@ -146,18 +148,7 @@ def finalize_semester(request, calendar_id):
         status=status.HTTP_200_OK,
     )
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def student_semester_eligibility(request, calendar_id):
-    try:
-        student = Student.objects.select_related(
-            "user", "course"
-        ).get(user=request.user)
-    except Student.DoesNotExist:
-        return Response(
-            {"error": "Student profile not found."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+def _student_semester_eligibility_for_student(student, calendar_id):
 
     try:
         calendar = SemesterCalendar.objects.get(id=calendar_id)
@@ -411,6 +402,89 @@ def student_semester_eligibility(request, calendar_id):
             "is_finalized": calendar.is_finalized,
             "finalized_at": calendar.finalized_at,
             "subjects": results,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def student_semester_eligibility(request, calendar_id):
+    """Return eligibility for the currently authenticated student."""
+    try:
+        student = Student.objects.select_related(
+            "user", "course"
+        ).get(user=request.user)
+    except Student.DoesNotExist:
+        return Response(
+            {"error": "Student profile not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return _student_semester_eligibility_for_student(
+        student, calendar_id
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsAdmin])
+def admin_semester_eligibility(request, calendar_id):
+    """Return semester eligibility for all registered students."""
+    try:
+        calendar = SemesterCalendar.objects.get(id=calendar_id)
+    except SemesterCalendar.DoesNotExist:
+        return Response(
+            {"error": "Semester calendar not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    students = Student.objects.select_related(
+        "user", "course"
+    ).order_by("full_name")
+
+    student_results = []
+
+    for student in students:
+        result = _student_semester_eligibility_for_student(
+            student, calendar_id
+        )
+
+        if result.status_code != status.HTTP_200_OK:
+            return result
+
+        student_data = dict(result.data)
+
+        # Include student details even when calendar dates
+        # have not yet been configured.
+        student_data.setdefault("student_id", student.id)
+        student_data.setdefault("student_name", student.full_name)
+        student_data.setdefault(
+            "course",
+            student.course.name if student.course else None,
+        )
+
+        student_results.append(student_data)
+
+    today = timezone.localdate()
+
+    if not calendar.teaching_start_date or not calendar.teaching_end_date:
+        semester_status = "Pending Review"
+    elif today <= calendar.teaching_end_date:
+        semester_status = "Monitoring"
+    elif not calendar.is_finalized:
+        semester_status = "Pending Review"
+    else:
+        semester_status = "Finalized"
+
+    return Response(
+        {
+            "calendar_id": calendar.id,
+            "academic_year": calendar.academic_year,
+            "semester": calendar.semester,
+            "semester_status": semester_status,
+            "is_finalized": calendar.is_finalized,
+            "finalized_at": calendar.finalized_at,
+            "student_count": len(student_results),
+            "students": student_results,
         },
         status=status.HTTP_200_OK,
     )

@@ -1,9 +1,11 @@
+
 from django.urls import path
 
 from .views import (
     SemesterCalendarListCreateView,
     finalize_semester,
     student_semester_eligibility,
+    admin_semester_eligibility,
 )
 
 urlpatterns = [
@@ -21,5 +23,10 @@ urlpatterns = [
         "<int:calendar_id>/eligibility/",
         student_semester_eligibility,
         name="student-semester-eligibility",
+    ),
+    path(
+        "<int:calendar_id>/eligibility/admin/",
+        admin_semester_eligibility,
+        name="admin-semester-eligibility",
     ),
 ]
