@@ -14,6 +14,7 @@ from courses.models import (
     StudentCourse,
     Subject,
     Timetable,
+    HODDepartment,
 )
 
 User = get_user_model()
@@ -122,3 +123,9 @@ class ClassroomAdmin(admin.ModelAdmin):
         "radius_meters",
     )
 admin.site.register(BLEBeacon)
+
+@admin.register(HODDepartment)
+class HODDepartmentAdmin(admin.ModelAdmin):
+    list_display = ("hod", "department")
+    list_filter = ("department",)
+    search_fields = ("hod__username", "department__name")
