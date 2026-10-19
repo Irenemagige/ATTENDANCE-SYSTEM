@@ -42,6 +42,27 @@ class SemesterCalendar(models.Model):
         null=True,
         blank=True,
     )
+    
+    
+    # End-of-semester eligibility finalization
+    is_finalized = models.BooleanField(
+        default=False,
+        help_text="Whether final attendance eligibility has been approved.",
+    )
+
+    finalized_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    finalized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="finalized_semester_calendars",
+    )
+
 
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
