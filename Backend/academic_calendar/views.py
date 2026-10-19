@@ -10,11 +10,11 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin
+from accounts.permissions import IsAdmin, IsLecturer, IsHOD
 from academic_calendar.models import AcademicCalendarPeriod
 from attendance.models import Attendance, AttendanceSession
 from attendance.views import calculate_movement_attendance
-from courses.models import Subject, Timetable
+from courses.models import Subject, Timetable, LecturerCourse,  HODDepartment
 from students.models import Student
 
 from .models import SemesterCalendar
@@ -483,6 +483,163 @@ def admin_semester_eligibility(request, calendar_id):
             "semester_status": semester_status,
             "is_finalized": calendar.is_finalized,
             "finalized_at": calendar.finalized_at,
+            "student_count": len(student_results),
+            "students": student_results,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsLecturer])
+def lecturer_semester_eligibility(request, calendar_id):
+    """Return semester eligibility for students in the lecturer's assigned courses."""
+
+    try:
+        calendar = SemesterCalendar.objects.get(id=calendar_id)
+    except SemesterCalendar.DoesNotExist:
+        return Response(
+            {"error": "Semester calendar not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Use both explicit course assignments and courses in the
+    # lecturer's timetable.
+    assigned_course_ids = set(
+        LecturerCourse.objects.filter(
+            lecturer=request.user
+        ).values_list("course_id", flat=True)
+    )
+
+    timetable_course_ids = Timetable.objects.filter(
+        lecturer=request.user
+    ).values_list("course_id", flat=True)
+
+    assigned_course_ids.update(timetable_course_ids)
+
+    students = Student.objects.select_related(
+        "user", "course"
+    ).filter(
+        course_id__in=assigned_course_ids
+    ).order_by("full_name")
+
+    student_results = []
+
+    for student in students:
+        result = _student_semester_eligibility_for_student(
+            student, calendar_id
+        )
+
+        if result.status_code != status.HTTP_200_OK:
+            return result
+
+        student_results.append(dict(result.data))
+
+    today = timezone.localdate()
+
+    if not calendar.teaching_start_date or not calendar.teaching_end_date:
+        semester_status = "Pending Review"
+    elif today <= calendar.teaching_end_date:
+        semester_status = "Monitoring"
+    elif not calendar.is_finalized:
+        semester_status = "Pending Review"
+    else:
+        semester_status = "Finalized"
+
+    return Response(
+        {
+            "calendar_id": calendar.id,
+            "academic_year": calendar.academic_year,
+            "semester": calendar.semester,
+            "semester_status": semester_status,
+            "is_finalized": calendar.is_finalized,
+            "finalized_at": calendar.finalized_at,
+            "student_count": len(student_results),
+            "students": student_results,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsHOD])
+def hod_semester_eligibility(request, calendar_id):
+    """Return semester eligibility for students in the HOD's department."""
+
+    # 1. Confirm the requested semester calendar exists.
+    try:
+        calendar = SemesterCalendar.objects.get(id=calendar_id)
+    except SemesterCalendar.DoesNotExist:
+        return Response(
+            {"error": "Semester calendar not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # 2. Find the department assigned to this HOD.
+    assignment = HODDepartment.objects.select_related(
+        "department"
+    ).filter(
+        hod=request.user
+    ).first()
+
+    if assignment is None:
+        return Response(
+            {"error": "No department has been assigned to this HOD account."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    department = assignment.department
+
+    # 3. Only retrieve students whose courses belong to this department.
+    students = Student.objects.select_related(
+        "user", "course"
+    ).filter(
+        course__department=department
+    ).order_by("full_name")
+
+    # 4. Reuse the existing eligibility calculation for each student.
+    student_results = []
+
+    for student in students:
+        result = _student_semester_eligibility_for_student(
+            student, calendar_id
+        )
+
+        if result.status_code != status.HTTP_200_OK:
+            return result
+
+        student_data = dict(result.data)
+        student_data.setdefault("student_id", student.id)
+        student_data.setdefault("student_name", student.full_name)
+        student_data.setdefault(
+            "course",
+            student.course.name if student.course else None,
+        )
+
+        student_results.append(student_data)
+
+    # 5. Determine the overall semester status.
+    today = timezone.localdate()
+
+    if not calendar.teaching_start_date or not calendar.teaching_end_date:
+        semester_status = "Pending Review"
+    elif today <= calendar.teaching_end_date:
+        semester_status = "Monitoring"
+    elif not calendar.is_finalized:
+        semester_status = "Pending Review"
+    else:
+        semester_status = "Finalized"
+
+    # 6. Return results for this department only.
+    return Response(
+        {
+            "calendar_id": calendar.id,
+            "academic_year": calendar.academic_year,
+            "semester": calendar.semester,
+            "semester_status": semester_status,
+            "is_finalized": calendar.is_finalized,
+            "finalized_at": calendar.finalized_at,
+            "department": department.name,
             "student_count": len(student_results),
             "students": student_results,
         },

@@ -14,6 +14,23 @@ class Department(models.Model):
         return self.name
 
 
+class HODDepartment(models.Model):
+    hod = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="hod_department_assignment",
+    )
+    department = models.OneToOneField(
+        Department,
+        on_delete=models.CASCADE,
+        related_name="hod_assignment",
+    )
+
+    def __str__(self):
+        return f"{self.hod.username} -> {self.department.name}"
+
+
+
 # ========================
 # COURSE MODEL
 # ========================
@@ -37,7 +54,7 @@ class Subject(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.course.name})"
-    
+
 
 class LecturerSubject(models.Model):
     lecturer = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -59,7 +76,7 @@ class LecturerAssignment(models.Model):
 
     def __str__(self):
         return f"{self.lecturer.username} -> {self.subject.name}"
-    
+
 
 class LecturerCourse(models.Model):
     lecturer = models.ForeignKey(
@@ -73,7 +90,7 @@ class LecturerCourse(models.Model):
 
     def __str__(self):
         return f"{self.lecturer.username} -> {self.course.name}"
-    
+
 class StudentCourse(models.Model):
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -86,7 +103,7 @@ class StudentCourse(models.Model):
 
     def __str__(self):
         return f"{self.student.username} -> {self.course.name}"
-    
+
 class Timetable(models.Model):
     course = models.ForeignKey(
         Course,
@@ -126,14 +143,14 @@ class Timetable(models.Model):
 
     def __str__(self):
         return f"{self.course} - {self.subject} - {self.day} {self.start_time}"
-    
+
 # ========================
 # CLASSROOM MODEL
 # ========================
 
 class Classroom(models.Model):
     id = models.AutoField(primary_key=True)
-    
+
     room_name = models.CharField(max_length=100)
     room_number = models.CharField(max_length=50)
 
@@ -170,4 +187,3 @@ class BLEBeacon(models.Model):
 
     def __str__(self):
         return self.beacon_name
-

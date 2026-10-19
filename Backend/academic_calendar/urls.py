@@ -6,6 +6,8 @@ from .views import (
     finalize_semester,
     student_semester_eligibility,
     admin_semester_eligibility,
+    lecturer_semester_eligibility,
+    hod_semester_eligibility,
 )
 
 urlpatterns = [
@@ -29,4 +31,15 @@ urlpatterns = [
         admin_semester_eligibility,
         name="admin-semester-eligibility",
     ),
+
+    path(
+    "<int:calendar_id>/eligibility/lecturer/",
+    lecturer_semester_eligibility,
+    name="lecturer-semester-eligibility",
+    ),
+    path(
+    "<int:calendar_id>/eligibility/hod/",
+    hod_semester_eligibility,
+    name="hod-semester-eligibility",
+),
 ]
