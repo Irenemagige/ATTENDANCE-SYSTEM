@@ -1372,9 +1372,11 @@ class _SessionCard extends StatelessWidget {
             value: session?['course']?.toString() ?? '-',
           ),
           _MetricRow(
-            label: 'Your state',
-            value: _attendanceStateLabel(attendanceState),
-          ),
+  label: 'Your state',
+  value: session == null
+      ? 'No Session'
+      : _attendanceStateLabel(attendanceState),
+),
         ],
       ),
     );
@@ -1881,12 +1883,14 @@ Color _sessionStatusColor(String label) {
 
 String _attendanceStateLabel(AttendanceFlowState state) {
   switch (state) {
+    case AttendanceFlowState.notCheckedIn:
+      return 'Not Checked In';
+
     case AttendanceFlowState.checkedIn:
       return 'Checked In';
+
     case AttendanceFlowState.checkedOut:
       return 'Checked Out';
-    case AttendanceFlowState.notCheckedIn:
-      return 'Pending';
   }
 }
 
