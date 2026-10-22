@@ -127,7 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: const Icon(
                             Icons.school_outlined,
                             size: 32,
-                            color: Color(0xFF1D4ED8),
+                            color: Color.fromARGB(255, 32, 29, 216),
                           ),
                         ),
                         const SizedBox(height: 20),
@@ -171,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 8),
                         FilledButton(
                           style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF2563EB),
+                            backgroundColor: const Color.fromARGB(255, 77, 37, 235),
                             foregroundColor: Colors.white,
                             minimumSize: const Size.fromHeight(52),
                             shape: RoundedRectangleBorder(

@@ -11,7 +11,7 @@ import 'package:mobile_app/features/attendance/presentation/screens/fingerprint_
 import 'package:mobile_app/features/attendance/presentation/screens/attendance_history_screen.dart';
 import 'package:mobile_app/features/timetable/presentation/timetable_screen.dart';
 
-const _primary = Color(0xFF2563EB);
+const _primary = Color.fromARGB(255, 37, 37, 235);
 const _primaryDark = Color(0xFF0F172A);
 const _surface = Color(0xFFF8FAFC);
 
@@ -28,7 +28,6 @@ class _MainShellScreenState extends State<MainShellScreen>
     with WidgetsBindingObserver {
   int currentIndex = 0;
   int unreadNotificationCount = 0;
-  bool _notificationsOpened = false;
 
   bool isLoading = true;
   bool isSecurityLoading = false;
@@ -39,6 +38,8 @@ class _MainShellScreenState extends State<MainShellScreen>
   int fingerprintAttempts = 0;
   bool _routeArgsApplied = false;
   Timer? _sessionTimer;
+  Timer? _postCheckoutTimer;
+  DateTime? _checkedOutAt;
 
   Map<String, dynamic>? user;
   Map<String, dynamic>? activeSession;
@@ -62,10 +63,11 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _sessionTimer?.cancel();
-    super.dispose();
-  }
+  WidgetsBinding.instance.removeObserver(this);
+  _sessionTimer?.cancel();
+  _postCheckoutTimer?.cancel();
+  super.dispose();
+}
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -230,6 +232,34 @@ if (attendanceState == AttendanceFlowState.checkedIn &&
   }
 }
 
+  void _schedulePostCheckoutClear() {
+  _postCheckoutTimer?.cancel();
+
+  final checkoutTime = DateTime.now();
+  _checkedOutAt = checkoutTime;
+
+  _postCheckoutTimer = Timer(
+    const Duration(minutes: 3),
+    () {
+      if (!mounted) return;
+
+      // Do not clear a newer session.
+      if (_checkedOutAt != checkoutTime ||
+          attendanceState != AttendanceFlowState.checkedOut ||
+          activeSession?['checked_out'] != true) {
+        return;
+      }
+
+      setState(() {
+        activeSession = null;
+        attendanceState = AttendanceFlowState.notCheckedIn;
+        securitySnapshot = null;
+        _checkedOutAt = null;
+      });
+    },
+  );
+}
+
   Future<void> refreshSessionStatus({bool showSnack = true}) async {
   final result = await attendanceService.getActiveSession();
 
@@ -252,23 +282,40 @@ if (attendanceState == AttendanceFlowState.checkedIn &&
     result['data'] ?? {},
   );
 
-  final sessionId = data['session_id'];
+  
+final sessionId = data['session_id'];
 
-  final sessionExists = sessionId != null;
+// A session is available only when the backend confirms it.
+// A previous session_id alone does not mean the session is open.
+final sessionExists =
+    data['session_exists'] == true &&
+    sessionId != null;
 
-  final checkedIn =
-      data['checked_in'] == true;
+final checkedIn =
+    data['checked_in'] == true;
 
-  final checkedOut =
-      data['checked_out'] == true;
+final checkedOut =
+    data['checked_out'] == true;
 
-  // ============================================
+// Keep the completed session visible for 3 minutes
+// after successful checkout, even if the backend
+// no longer returns it as an available session.
+if (!sessionExists &&
+    attendanceState == AttendanceFlowState.checkedOut &&
+    _checkedOutAt != null &&
+    DateTime.now().difference(_checkedOutAt!) <
+        const Duration(minutes: 3)) {
+  return;
+}
+
+// ============================================
 // NO SESSION
 // ============================================
 
 if (!sessionExists) {
   setState(() {
     activeSession = null;
+    attendanceState = AttendanceFlowState.notCheckedIn;
   });
 
   if (showSnack) {
@@ -280,6 +327,7 @@ if (!sessionExists) {
 
   return;
 }
+
 
   // ============================================
   // SESSION EXISTS
@@ -694,21 +742,45 @@ if (!identityVerified) {
     // 7. HANDLE RESPONSE
     // =========================================================
 
-    if (result['success'] == true) {
-      setState(() {
-        attendanceState = AttendanceFlowState.checkedOut;
-        checkoutIdentityVerified = false;
-      });
+    
+if (result['success'] == true) {
+  final checkoutData = Map<String, dynamic>.from(
+    result['data'] ?? {},
+  );
 
-      _snack('Checked-out successfully');
+  final completedSession =
+      Map<String, dynamic>.from(activeSession ?? {});
 
-      await Future.wait([
-        refreshSessionStatus(showSnack: false),
-        loadAttendanceStats(),
-      ]);
+  completedSession.addAll({
+    'checked_out': true,
+    'session_active': false,
+    'session_ended': true,
+    'can_check_out': false,
+  });
 
-      return;
-    }
+  final finalPercentage =
+      checkoutData['percentage'] ??
+      checkoutData['attendance_percentage'];
+
+  if (finalPercentage != null) {
+    completedSession['percentage'] = finalPercentage;
+  }
+
+  setState(() {
+    activeSession = completedSession;
+    attendanceState = AttendanceFlowState.checkedOut;
+    checkoutIdentityVerified = false;
+  });
+
+  _schedulePostCheckoutClear();
+
+  _snack('Checked-out successfully');
+
+  await loadAttendanceStats();
+
+  return;
+}
+
 
     final data = Map<String, dynamic>.from(
       result['data'] ?? {},
@@ -857,7 +929,6 @@ if (!identityVerified) {
 
     setState(() {
       unreadNotificationCount = 0;
-      _notificationsOpened = true;
 
     });
   },
@@ -993,7 +1064,7 @@ class HomeTab extends StatelessWidget {
         : null;
     final attendanceStatus =
         stats?['status']?.toString() ??
-        (attendancePercent >= 75 ? 'Fine' : 'Critical');
+        (attendancePercent >= 50 ? 'Fine' : 'Critical');
     final attendanceColor = attendanceStatus == 'Fine'
         ? Colors.green
         : Colors.redAccent;
@@ -1047,10 +1118,12 @@ class HomeTab extends StatelessWidget {
                     Expanded(
                       child: _SummaryTile(
                         label: 'Attendance',
-                        value: sessionAttendancePercent == null
-    ? 'Pending'
+value: sessionAttendancePercent == null
+    ? (attendanceState == AttendanceFlowState.checkedIn
+        ? 'Pending'
+        : '—')
     : '${sessionAttendancePercent.toStringAsFixed(1)}%',
-                        accent: attendanceColor,
+accent: attendanceColor,
                       ),
                     ),
                   ],
@@ -1064,6 +1137,7 @@ class HomeTab extends StatelessWidget {
           status: attendanceStatus,
           color: attendanceColor,
           sessionAttendancePercent: sessionAttendancePercent,
+           attendanceState: attendanceState,
        ),
           const SizedBox(height: 12),
           _SessionCard(
@@ -1220,12 +1294,14 @@ class _AttendanceStatsCard extends StatelessWidget {
     required this.status,
     required this.color,
     required this.sessionAttendancePercent,
+    required this.attendanceState,
   });
 
   final Map<String, dynamic>? stats;
   final String status;
   final Color color;
   final double? sessionAttendancePercent;
+  final AttendanceFlowState attendanceState;
 
   @override
   Widget build(BuildContext context) {
@@ -1238,18 +1314,14 @@ class _AttendanceStatsCard extends StatelessWidget {
           _MetricRow(
   label: 'Session Attendance Percentage',
   value: sessionAttendancePercent == null
-      ? 'Pending'
+      ? (attendanceState == AttendanceFlowState.checkedIn
+          ? 'Pending'
+          : '—')
       : '${sessionAttendancePercent!.toStringAsFixed(1)}%',
   valueColor: color,
 ),
-          _MetricRow(
-            label: 'Session Attendance',
-            value: sessionAttendancePercent == null
-                ? 'Pending'
-                : '${sessionAttendancePercent!.toStringAsFixed(1)}%',
-            valueColor: color,
-          ),
-          _MetricRow(label: 'Status', value: status, valueColor: color),
+  
+          _MetricRow(label:'Status', value: status, valueColor: color),
           _MetricRow(
             label: 'Total Sessions',
             value: (stats?['total_sessions'] ?? 0).toString(),
