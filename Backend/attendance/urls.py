@@ -7,6 +7,7 @@ from .views import (
     check_out,
     end_session,
     lecturer_dashboard,
+    lecturer_active_session_monitor,
     attendance_report,
     session_report,
     lecturer_attendance_history,
@@ -40,6 +41,12 @@ urlpatterns = [
     'lecturer/attendance-history/',
     lecturer_attendance_history,
     name='lecturer_attendance_history',
+),
+    
+    path(
+    'lecturer/active-session-monitor/',
+    lecturer_active_session_monitor,
+    name='lecturer_active_session_monitor',
 ),
 ]
 

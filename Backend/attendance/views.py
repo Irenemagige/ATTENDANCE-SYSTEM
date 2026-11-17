@@ -1108,6 +1108,166 @@ def end_session(request):
             "session_id": session.id
         }
     )
+    
+# ======================================================
+# LECTURER ACTIVE SESSION MONITORING
+# ======================================================
+
+@api_view(["GET"])
+@permission_classes([IsLecturer])
+def lecturer_active_session_monitor(request):
+
+    session = (
+        AttendanceSession.objects.filter(
+            lecturer=request.user,
+            is_active=True,
+        )
+        .select_related(
+            "course",
+            "subject",
+            "classroom",
+        )
+        .first()
+    )
+
+    if not session:
+        return Response({
+            "session_exists": False,
+            "session": None,
+            "students": [],
+        })
+
+    # Get every student enrolled in this course.
+    students = Student.objects.filter(
+        course=session.course
+    ).order_by("full_name")
+
+    # Get existing attendance records for this session.
+    attendance_records = {
+        record.student_id: record
+        for record in Attendance.objects.filter(
+            session=session
+        ).select_related("student")
+    }
+
+    student_data = []
+
+    checked_in_count = 0
+    checked_out_count = 0
+    not_checked_in_count = 0
+
+    for student in students:
+
+        record = attendance_records.get(student.id)
+
+        if record:
+
+            checked_in = record.check_in_time is not None
+            checked_out = record.check_out_time is not None
+
+            if checked_in:
+                checked_in_count += 1
+
+            if checked_out:
+                checked_out_count += 1
+
+            # Calculate live attendance using verified movement logs.
+            if checked_in and not checked_out:
+                attendance_percentage = (
+                    calculate_movement_attendance(record)["percentage"]
+                )
+            else:
+                attendance_percentage = float(
+                    record.attendance_percentage or 0
+                )
+
+            status = record.status
+
+            check_in = (
+                record.check_in_time.isoformat()
+                if record.check_in_time
+                else None
+            )
+
+            check_out = (
+                record.check_out_time.isoformat()
+                if record.check_out_time
+                else None
+            )
+
+        else:
+
+            checked_in = False
+            checked_out = False
+
+            attendance_percentage = 0
+
+            status = "NOT_CHECKED_IN"
+
+            check_in = None
+            check_out = None
+        if not checked_in:
+           not_checked_in_count += 1
+
+        student_data.append({
+            "student_id": student.id,
+            "name": student.full_name,
+            "registration": student.reg_number,
+            "attendance_percentage": round(
+                min(max(float(attendance_percentage), 0), 100),
+                2,
+            ),
+            "status": status,
+            "checked_in": checked_in,
+            "checked_out": checked_out,
+            "check_in": check_in,
+            "check_out": check_out,
+        })
+
+    return Response({
+        "session_exists": True,
+
+        "session": {
+            "session_id": session.id,
+            "course": session.course.name,
+            "subject": session.subject.name,
+            "date": (
+                session.date.isoformat()
+                if session.date
+                else None
+            ),
+            "classroom": (
+                session.classroom.room_name
+                if session.classroom
+                else None
+            ),
+            "room_number": (
+                session.classroom.room_number
+                if session.classroom
+                else None
+            ),
+            "radius_meters": session.radius_meters,
+            "start_time": (
+                session.start_time.isoformat()
+                if session.start_time
+                else None
+            ),
+            "end_time": (
+                session.end_time.isoformat()
+                if session.end_time
+                else None
+            ),
+            "is_override": session.is_override,
+            "override_reason": session.override_reason,
+        },
+
+        "total_students": len(student_data),
+        "checked_in_count": checked_in_count,
+        "checked_out_count": checked_out_count,
+        "not_checked_in_count": not_checked_in_count,
+
+        "students": student_data,
+    })
 # ======================================================
 # LECTURER DASHBOARD
 # ======================================================
