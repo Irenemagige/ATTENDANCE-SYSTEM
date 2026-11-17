@@ -1353,6 +1353,456 @@ def session_report(request, session_id):
 
 
 
+@api_view(["GET"])
+@permission_classes([IsLecturer])
+def lecturer_attendance_history(request):
+    """
+    Lecturer attendance history:
+    Course -> Subject -> Sessions -> Student records.
+
+    Subject percentages use the same scheduled-hours and
+    movement-log calculation as student attendance history.
+    """
+
+    auto_close_expired_sessions()
+
+    lecturer = request.user
+
+    # -----------------------------------------------------
+    # HELPER: SCHEDULED HOURS FOR ONE SESSION
+    # -----------------------------------------------------
+
+    def get_scheduled_hours(session):
+        if session.is_override:
+            return max(
+                (session.override_duration_minutes or 0) / 60,
+                0,
+            )
+
+        if session.timetable:
+            start = session.timetable.start_time
+            end = session.timetable.end_time
+
+            if start and end:
+                start_minutes = start.hour * 60 + start.minute
+                end_minutes = end.hour * 60 + end.minute
+
+                if end_minutes <= start_minutes:
+                    end_minutes += 24 * 60
+
+                return max(
+                    (end_minutes - start_minutes) / 60,
+                    0,
+                )
+
+        if session.start_time and session.end_time:
+            return max(
+                (
+                    session.end_time - session.start_time
+                ).total_seconds() / 3600,
+                0,
+            )
+
+        return 0
+
+    # -----------------------------------------------------
+    # HELPER: VERIFIED ATTENDED HOURS
+    # -----------------------------------------------------
+
+    def get_attended_hours(attendance):
+        if not attendance or not attendance.check_in_time:
+            return 0
+
+        result = calculate_movement_attendance(attendance)
+
+        return max(
+            result["attended_seconds"] / 3600,
+            0,
+        )
+
+    # -----------------------------------------------------
+    # HELPER: CUMULATIVE SUBJECT PERCENTAGE FOR ONE STUDENT
+    # -----------------------------------------------------
+
+    def calculate_student_subject_percentage(
+        student,
+        subject,
+        current_session,
+    ):
+        records = Attendance.objects.filter(
+            student=student,
+            session__subject=subject,
+            session__date__lte=current_session.date,
+        ).filter(
+            Q(
+                check_in_time__isnull=False,
+                check_out_time__isnull=False,
+            )
+            | Q(
+                check_in_time__isnull=True,
+                session__is_active=False,
+            )
+        ).select_related(
+            "session",
+            "session__timetable",
+        )
+
+        def legacy_percentage():
+            total_scheduled = 0
+            total_attended = 0
+
+            for record in records:
+                scheduled = get_scheduled_hours(record.session)
+                attended = get_attended_hours(record)
+
+                total_scheduled += scheduled
+                total_attended += min(attended, scheduled)
+
+            if total_scheduled <= 0:
+                return 0
+
+            return round(
+                min(
+                    total_attended / total_scheduled * 100,
+                    100,
+                ),
+                2,
+            )
+
+        calendar = SemesterCalendar.objects.filter(
+            teaching_start_date__isnull=False,
+            teaching_end_date__isnull=False,
+            teaching_start_date__lte=current_session.date,
+            teaching_end_date__gte=current_session.date,
+        ).first()
+
+        if not calendar:
+            return legacy_percentage()
+
+        end_date = min(
+            current_session.date,
+            calendar.teaching_end_date,
+        )
+
+        excluded_dates = set()
+
+        excluded_period_types = {
+            "BREAK",
+            "REVISION",
+            "EXAM",
+            "OTHER",
+        }
+
+        for period in calendar.periods.filter(
+            period_type__in=excluded_period_types,
+        ):
+            period_date = max(
+                period.start_date,
+                calendar.teaching_start_date,
+            )
+            period_end = min(
+                period.end_date,
+                calendar.teaching_end_date,
+            )
+
+            while period_date <= period_end:
+                excluded_dates.add(period_date)
+                period_date += timedelta(days=1)
+
+        timetables = Timetable.objects.filter(
+            course=student.course,
+            subject=subject,
+        )
+
+        if not timetables.exists():
+            return legacy_percentage()
+
+        total_scheduled_hours = 0
+        total_attended_hours = 0
+
+        scheduled_date = calendar.teaching_start_date
+
+        while scheduled_date <= end_date:
+            if scheduled_date not in excluded_dates:
+                day_code = scheduled_date.strftime("%a").upper()[:3]
+
+                for timetable in timetables:
+                    if timetable.day != day_code:
+                        continue
+
+                    start = timetable.start_time
+                    end = timetable.end_time
+
+                    if not start or not end:
+                        continue
+
+                    start_minutes = start.hour * 60 + start.minute
+                    end_minutes = end.hour * 60 + end.minute
+
+                    if end_minutes <= start_minutes:
+                        end_minutes += 24 * 60
+
+                    total_scheduled_hours += (
+                        end_minutes - start_minutes
+                    ) / 60
+
+            scheduled_date += timedelta(days=1)
+
+        for record in records:
+            session_date = record.session.date
+
+            if not session_date:
+                continue
+
+            if not (
+                calendar.teaching_start_date
+                <= session_date
+                <= end_date
+            ):
+                continue
+
+            if session_date in excluded_dates:
+                continue
+
+            scheduled = get_scheduled_hours(record.session)
+            attended = get_attended_hours(record)
+
+            total_attended_hours += min(
+                attended,
+                scheduled,
+            )
+
+        if total_scheduled_hours <= 0:
+            return legacy_percentage()
+
+        return round(
+            min(
+                total_attended_hours / total_scheduled_hours * 100,
+                100,
+            ),
+            2,
+        )
+
+    # -----------------------------------------------------
+    # COURSES ASSIGNED TO THIS LECTURER
+    # -----------------------------------------------------
+
+    lecturer_courses = LecturerCourse.objects.filter(
+        lecturer=lecturer,
+    ).select_related(
+        "course",
+    )
+
+    courses_data = []
+
+    for lecturer_course in lecturer_courses:
+        course = lecturer_course.course
+
+        students = list(
+            Student.objects.filter(
+                course=course,
+            ).order_by(
+                "full_name",
+            )
+        )
+
+        subjects_data = []
+
+        lecturer_subjects = LecturerSubject.objects.filter(
+            lecturer=lecturer,
+            subject__course=course,
+        ).select_related(
+            "subject",
+        )
+
+        for lecturer_subject in lecturer_subjects:
+            subject = lecturer_subject.subject
+
+            sessions = AttendanceSession.objects.filter(
+                lecturer=lecturer,
+                course=course,
+                subject=subject,
+            ).select_related(
+                "course",
+                "subject",
+                "classroom",
+                "timetable",
+            ).order_by(
+                "date",
+                "start_time",
+            )
+
+            sessions_data = []
+
+            # Latest finalized session is used for the
+            # cumulative subject percentage, like mobile history.
+            finalized_records = Attendance.objects.filter(
+                student__course=course,
+                session__lecturer=lecturer,
+                session__course=course,
+                session__subject=subject,
+            ).filter(
+                Q(
+                    check_in_time__isnull=False,
+                    check_out_time__isnull=False,
+                )
+                | Q(
+                    check_in_time__isnull=True,
+                    session__is_active=False,
+                )
+            ).select_related(
+                "session",
+            ).order_by(
+                "-session__date",
+                "-session__start_time",
+            )
+
+            latest_session = (
+                finalized_records.first().session
+                if finalized_records.exists()
+                else None
+            )
+
+            subject_students = []
+
+            for student in students:
+                cumulative_percentage = (
+                    calculate_student_subject_percentage(
+                        student,
+                        subject,
+                        latest_session,
+                    )
+                    if latest_session
+                    else 0
+                )
+
+                subject_students.append({
+                    "student_id": student.id,
+                    "name": student.full_name,
+                    "registration": student.reg_number,
+                    "subject_attendance_percentage": (
+                        cumulative_percentage
+                    ),
+                })
+
+            # -------------------------------------------------
+            # INDIVIDUAL SESSIONS
+            # -------------------------------------------------
+
+            for session in sessions:
+                attendance_records = {
+                    record.student_id: record
+                    for record in Attendance.objects.filter(
+                        session=session,
+                    ).select_related(
+                        "student",
+                    )
+                }
+
+                session_students = []
+                percentage_total = 0
+
+                for student in students:
+                    record = attendance_records.get(student.id)
+
+                    if record:
+                        if record.check_in_time and (
+                            record.check_out_time is None
+                        ):
+                            session_percentage = (
+                                calculate_movement_attendance(
+                                    record
+                                )["percentage"]
+                            )
+                        else:
+                            session_percentage = float(
+                                record.attendance_percentage or 0
+                            )
+
+                        status = record.status
+
+                        check_in = record.check_in_time
+                        check_out = record.check_out_time
+
+                    else:
+                        session_percentage = 0
+
+                        status = (
+                            "ABSENT"
+                            if not session.is_active
+                            else "NOT_CHECKED_IN"
+                        )
+
+                        check_in = None
+                        check_out = None
+
+                    session_percentage = round(
+                        min(max(float(session_percentage), 0), 100),
+                        2,
+                    )
+
+                    percentage_total += session_percentage
+
+                    session_students.append({
+                        "student_id": student.id,
+                        "name": student.full_name,
+                        "registration": student.reg_number,
+                        "attendance_percentage": session_percentage,
+                        "status": status,
+                        "check_in": check_in,
+                        "check_out": check_out,
+                    })
+
+                total_students = len(students)
+
+                session_percentage = (
+                    round(
+                        percentage_total / total_students,
+                        2,
+                    )
+                    if total_students
+                    else 0
+                )
+
+                sessions_data.append({
+                    "session_id": session.id,
+                    "date": (
+                        session.date.isoformat()
+                        if session.date
+                        else None
+                    ),
+                    "start_time": session.start_time,
+                    "end_time": session.end_time,
+                    "active": session.is_active,
+                    "classroom": (
+                        session.classroom.room_name
+                        if session.classroom
+                        else None
+                    ),
+                    "total_students": total_students,
+                    "percentage": session_percentage,
+                    "students": session_students,
+                })
+
+            subjects_data.append({
+                "subject_id": subject.id,
+                "subject": subject.name,
+                "code": subject.code,
+                "students": subject_students,
+                "sessions": sessions_data,
+            })
+
+        courses_data.append({
+            "course_id": course.id,
+            "course": course.name,
+            "code": course.code,
+            "subjects": subjects_data,
+        })
+
+    return Response({
+        "courses": courses_data,
+    })
+
 
 
 # ======================================================
@@ -1890,12 +2340,6 @@ def location_update(request):
         "inside_geofence": inside_geofence,
         "distance_meters": round(distance, 2),
     })
-
-
-@api_view(['GET'])
-def student_attendance_history(request):
-    user = request.user
-    student = Student.objects.get(user=user)
 
 
 @api_view(["GET"])

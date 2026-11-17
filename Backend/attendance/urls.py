@@ -9,6 +9,7 @@ from .views import (
     lecturer_dashboard,
     attendance_report,
     session_report,
+    lecturer_attendance_history,
     active_session,
     location_update,
     notifications,
@@ -35,6 +36,11 @@ urlpatterns = [
     path('report/', attendance_report, name='attendance_report'),
     path('session-report/<int:session_id>/', session_report, name='session_report'),
     path('notifications/', notifications, name='notifications'),
+    path(
+    'lecturer/attendance-history/',
+    lecturer_attendance_history,
+    name='lecturer_attendance_history',
+),
 ]
 
 
