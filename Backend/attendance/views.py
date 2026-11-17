@@ -1163,6 +1163,13 @@ def lecturer_dashboard(request):
             "course": session.course.name,
 
             "subject": session.subject.name,
+            
+            "classroom": session.classroom.room_name if session.classroom else None,
+            "room_number": session.classroom.room_number if session.classroom else None,
+            "start_time": session.start_time,
+            "end_time": session.end_time,
+            "is_override": session.is_override,
+            "override_reason": session.override_reason, 
 
             "date": session.date,
 
