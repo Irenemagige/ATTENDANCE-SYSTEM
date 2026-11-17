@@ -1326,6 +1326,9 @@ def session_report(request, session_id):
                     record.student.reg_number,
 
                 "status": record.status,
+                
+                "attendance_percentage": record.attendance_percentage,
+                
 
                 "check_in":
                     record.check_in_time,
