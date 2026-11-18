@@ -6,6 +6,11 @@ urlpatterns = [
     path('assign-student/', assign_student_to_course, name='assign_student_to_course'),
     path('assign-lecturer/', assign_lecturer_to_course, name='assign_lecturer-to_course'),
     path('lecturer/', views.lecturer_courses, name='lecturer_courses'),
+    path(
+    'lecturer/timetable/',
+    views.lecturer_timetable,
+    name='lecturer_timetable',
+    ),
     path('subjects/', views.subject_list, name='subject_list'),
     path('classrooms/', views.classroom_list, name='classroom_list'),
     path('timetable/create/', views.create_timetable, name='create_timetable'),

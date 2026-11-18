@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from openpyxl import load_workbook
 
-from accounts.permissions import IsAdminOrStaff
+from accounts.permissions import IsAdminOrStaff, IsLecturer
 from courses.models import Course, LecturerCourse, StudentCourse, Timetable, Subject,LecturerSubject,Classroom
 
 User = get_user_model()
@@ -485,3 +485,48 @@ def my_timetable(request):
             ],
         }
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsLecturer])
+def lecturer_timetable(request):
+
+    assigned_course_ids = LecturerCourse.objects.filter(
+        lecturer=request.user
+    ).values_list("course_id", flat=True)
+
+    timetable = Timetable.objects.filter(
+        lecturer=request.user,
+        course_id__in=assigned_course_ids,
+    ).select_related(
+        "course",
+        "subject",
+        "lecturer",
+    ).order_by(
+        "day",
+        "start_time",
+    )
+
+    return Response({
+        "timetable": [
+            {
+                "id": item.id,
+                "course": {
+                    "id": item.course.id,
+                    "name": item.course.name,
+                    "code": item.course.code,
+                },
+                "subject": {
+                    "id": item.subject.id,
+                    "name": item.subject.name,
+                    "code": item.subject.code,
+                },
+                "day": item.day,
+                "day_name": item.get_day_display(),
+                "start_time": item.start_time.strftime("%H:%M"),
+                "end_time": item.end_time.strftime("%H:%M"),
+                "room": item.room,
+            }
+            for item in timetable
+        ]
+    })
