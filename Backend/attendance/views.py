@@ -1361,8 +1361,6 @@ def lecturer_dashboard(request):
 
 
 
-
-# ======================================================
 # ATTENDANCE REPORT
 # ======================================================
 
@@ -1372,28 +1370,95 @@ def attendance_report(request):
 
     sessions = AttendanceSession.objects.filter(
         lecturer=request.user
-    ).order_by("-start_time")
-
+    ).select_related(
+        "course",
+        "subject",
+    ).order_by(
+        "-start_time",
+    )
 
     result = []
 
-
     for session in sessions:
 
-
-        records = Attendance.objects.filter(
-            session=session
+        students = list(
+            Student.objects.filter(
+                course=session.course,
+            ).order_by(
+                "full_name",
+            )
         )
 
+        attendance_records = {
+            record.student_id: record
+            for record in Attendance.objects.filter(
+                session=session,
+            ).select_related(
+                "student",
+            )
+        }
 
-        total = records.count()
+        percentage_total = 0
+        attended_count = 0
 
+        present_count = 0
+        absent_count = 0
 
-        present = records.filter(
-            status="PRESENT"
-        ).count()
+        for student in students:
 
+            record = attendance_records.get(student.id)
 
+            if record:
+
+                if record.check_in_time and (
+                    record.check_out_time is None
+                ):
+                    student_percentage = (
+                        calculate_movement_attendance(
+                            record
+                        )["percentage"]
+                    )
+                else:
+                    student_percentage = float(
+                        record.attendance_percentage or 0
+                    )
+
+                if record.status in (
+                   "PRESENT",
+                   "LATE",
+                   "PARTIAL_ATTENDANCE",
+                ):
+                    attended_count += 1
+
+                if record.status == "PRESENT":
+                    present_count += 1
+
+                if record.status == "ABSENT":
+                    absent_count += 1
+
+            else:
+                student_percentage = 0
+
+            student_percentage = round(
+                min(
+                    max(float(student_percentage), 0),
+                    100,
+                ),
+                2,
+            )
+
+            percentage_total += student_percentage
+
+        total_students = len(students)
+
+        session_percentage = (
+            round(
+                percentage_total / total_students,
+                2,
+            )
+            if total_students
+            else 0
+        )
 
         result.append({
 
@@ -1403,31 +1468,27 @@ def attendance_report(request):
 
             "subject": session.subject.name,
 
-            "total": total,
+            "date": (
+                session.date.isoformat()
+                if session.date
+                else None
+            ),
 
-            "present": present,
+            "total": total_students,
 
-            "absent":
-                records.filter(
-                    status="ABSENT"
-                ).count(),
+            "attended_count": attended_count,
 
-            "percentage":
-                round(
-                    (present / total) * 100,
-                    2
-                )
-                if total else 0
+            "present": present_count,
+
+            "absent": absent_count,
+
+            "percentage": session_percentage,
 
         })
 
-
-    return Response(
-        {
-            "sessions": result
-        }
-    )
-
+    return Response({
+        "sessions": result
+    })
 
 
 
