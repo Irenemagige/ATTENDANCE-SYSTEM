@@ -140,7 +140,10 @@ def subject_list(request):
         )
 
     subjects = Subject.objects.filter(
-        course_id=course_id
+        course_id=course_id,
+        id__in=LecturerSubject.objects.filter(
+            lecturer=request.user
+        ).values_list("subject_id", flat=True)
     )
 
     return Response([
