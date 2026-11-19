@@ -426,24 +426,19 @@ def start_session(request):
                 },
                 status=400
             )
-        if not (override_start <= current_time < override_end):
+        if override_start.hour != now.hour or override_start.minute != now.minute:
             return Response(
-           {
-            "error": (
-                "The current time is outside the approved override "
-                "period. Attendance cannot be started."
+                {
+                    "error": (
+                        "Override start time must match the current "
+                        "time exactly, including minutes."
+                    )
+                },
+                status=400
             )
-            },
-        status=400
-    )
 
-        session_start_time = timezone.make_aware(
-            datetime.combine(
-                now.date(),
-                override_start
-            ),
-            timezone.get_current_timezone()
-        )
+        session_start_time = now
+
 
         session_end_time = timezone.make_aware(
             datetime.combine(
