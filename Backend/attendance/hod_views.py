@@ -822,3 +822,312 @@ def hod_students(request):
         "students": student_data,
         "last_updated": timezone.now().isoformat(),
     }, status=status.HTTP_200_OK)
+
+
+# ==========================================================
+# HOD DEPARTMENT ANALYTICS
+# ==========================================================
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsHOD])
+def hod_analytics(request):
+    assignment = get_hod_department(request.user)
+
+    if not assignment:
+        return Response(
+            {"detail": "You are not assigned to a department."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    department = assignment.department
+
+    academic_year = request.query_params.get("academic_year")
+    semester = request.query_params.get("semester")
+
+    if not academic_year or not semester:
+        return Response(
+            {"detail": "Academic year and semester are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    calendar = SemesterCalendar.objects.filter(
+        academic_year=academic_year,
+        semester=semester,
+    ).first()
+
+    if not calendar:
+        return Response(
+            {"detail": "No academic calendar was found for the selected semester."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not calendar.teaching_start_date or not calendar.teaching_end_date:
+        return Response(
+            {"detail": "Teaching dates are missing from the selected academic calendar."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    start_date = calendar.teaching_start_date
+    end_date = calendar.teaching_end_date
+
+    excluded_dates = set()
+
+    excluded_periods = calendar.periods.filter(
+        period_type__in=["BREAK", "REVISION", "EXAM", "OTHER"]
+    )
+
+    for period in excluded_periods:
+        period_start = max(period.start_date, start_date)
+        period_end = min(period.end_date, end_date)
+
+        current_date = period_start
+
+        while current_date <= period_end:
+            excluded_dates.add(current_date)
+            current_date += timedelta(days=1)
+
+    courses = list(
+        Course.objects.filter(
+            department=department
+        ).order_by("name")
+    )
+
+    students = list(
+        Student.objects.filter(
+            course__department=department
+        ).select_related("course")
+    )
+
+    sessions = list(
+        AttendanceSession.objects.filter(
+            course__department=department,
+            date__gte=start_date,
+            date__lte=end_date,
+            is_active=False,
+        ).filter(
+            Q(end_time__isnull=False) | Q(ended_at__isnull=False)
+        ).select_related(
+            "course",
+            "subject",
+            "timetable",
+        ).order_by("date", "start_time")
+    )
+
+    # Exclude sessions held during official non-teaching periods.
+    sessions = [
+        session for session in sessions
+        if session.date not in excluded_dates
+    ]
+
+    session_ids = [session.id for session in sessions]
+
+    finalized_statuses = [
+        "PRESENT",
+        "LATE",
+        "PARTIAL_ATTENDANCE",
+        "ABSENT",
+    ]
+
+    attendance_records = list(
+        Attendance.objects.filter(
+            session_id__in=session_ids,
+            status__in=finalized_statuses,
+        ).select_related(
+            "student",
+            "session",
+            "session__timetable",
+        )
+    )
+
+    # Scheduled hours for each completed session.
+    scheduled_hours = {}
+
+    for session in sessions:
+        scheduled_hours[session.id] = _hod_get_scheduled_hours(session)
+
+    # Count enrolled students in each department course.
+    student_counts = {}
+
+    for course in courses:
+        student_counts[course.id] = sum(
+            1 for student in students
+            if student.course_id == course.id
+        )
+
+    # Aggregate attendance records by student and course.
+    student_attended_hours = {}
+    student_record_counts = {}
+    course_attended_hours = {}
+    course_record_counts = {}
+
+    for record in attendance_records:
+        student_id = record.student_id
+        course_id = record.session.course_id
+
+        attended = _hod_get_attended_hours(record)
+        scheduled = scheduled_hours.get(record.session_id, 0)
+
+        student_attended_hours[student_id] = (
+            student_attended_hours.get(student_id, 0)
+            + min(attended, scheduled)
+        )
+
+        student_record_counts[student_id] = (
+            student_record_counts.get(student_id, 0) + 1
+        )
+
+        course_attended_hours[course_id] = (
+            course_attended_hours.get(course_id, 0)
+            + min(attended, scheduled)
+        )
+
+        course_record_counts[course_id] = (
+            course_record_counts.get(course_id, 0) + 1
+        )
+
+    # Calculate the total scheduled hours for each course.
+    course_scheduled_hours = {}
+
+    for session in sessions:
+        course_id = session.course_id
+
+        course_scheduled_hours[course_id] = (
+            course_scheduled_hours.get(course_id, 0)
+            + scheduled_hours.get(session.id, 0)
+        )
+
+    # Student performance overview.
+    healthy = 0
+    at_risk = 0
+    no_records = 0
+
+    for student in students:
+        student_id = student.id
+        course_id = student.course_id
+
+        if student_record_counts.get(student_id, 0) == 0:
+            no_records += 1
+            continue
+
+        total_scheduled = course_scheduled_hours.get(course_id, 0)
+        attended = student_attended_hours.get(student_id, 0)
+
+        percentage = (
+            min(attended / total_scheduled * 100, 100)
+            if total_scheduled > 0
+            else 0
+        )
+
+        if percentage >= 75:
+            healthy += 1
+        else:
+            at_risk += 1
+
+    # Courses requiring attention.
+    courses_requiring_attention = []
+
+    for course in courses:
+        course_id = course.id
+
+        if course_record_counts.get(course_id, 0) == 0:
+            continue
+
+        total_scheduled = (
+            course_scheduled_hours.get(course_id, 0)
+            * student_counts.get(course_id, 0)
+        )
+
+        attended = course_attended_hours.get(course_id, 0)
+
+        percentage = (
+            min(attended / total_scheduled * 100, 100)
+            if total_scheduled > 0
+            else 0
+        )
+
+        if percentage < 75:
+            courses_requiring_attention.append({
+                "course": course.name,
+                "attendance_percentage": round(percentage, 2),
+            })
+
+    courses_requiring_attention.sort(
+        key=lambda item: item["attendance_percentage"]
+    )
+
+    # Divide the selected semester into six chronological periods.
+    total_days = max((end_date - start_date).days + 1, 1)
+
+    trend_totals = [
+        {"attended": 0, "scheduled": 0}
+        for _ in range(6)
+    ]
+
+    for session in sessions:
+        day_number = (session.date - start_date).days
+
+        period_index = min(
+            int(day_number * 6 / total_days),
+            5,
+        )
+
+        course_id = session.course_id
+        session_hours = scheduled_hours.get(session.id, 0)
+
+        expected_hours = (
+            session_hours * student_counts.get(course_id, 0)
+        )
+
+        trend_totals[period_index]["scheduled"] += expected_hours
+
+    for record in attendance_records:
+        session = record.session
+
+        day_number = (session.date - start_date).days
+
+        period_index = min(
+            int(day_number * 6 / total_days),
+            5,
+        )
+
+        scheduled = scheduled_hours.get(session.id, 0)
+        attended = _hod_get_attended_hours(record)
+
+        trend_totals[period_index]["attended"] += min(
+            attended,
+            scheduled,
+        )
+
+    attendance_trend = []
+
+    for index, totals in enumerate(trend_totals):
+        percentage = (
+            min(
+                totals["attended"] / totals["scheduled"] * 100,
+                100,
+            )
+            if totals["scheduled"] > 0
+            else 0
+        )
+
+        attendance_trend.append({
+            "period": f"Period {index + 1}",
+            "attendance_percentage": round(percentage, 2),
+        })
+
+    return Response({
+        "student_performance": {
+            "healthy": healthy,
+            "at_risk": at_risk,
+            "no_records": no_records,
+        },
+        "courses_requiring_attention": courses_requiring_attention,
+        "attendance_trend": attendance_trend,
+        "hod_attention": {
+            "students_below_threshold": at_risk,
+            "courses_with_low_attendance": len(
+                courses_requiring_attention
+            ),
+        },
+    }, status=status.HTTP_200_OK)
+
