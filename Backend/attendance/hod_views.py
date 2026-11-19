@@ -741,3 +741,84 @@ def hod_dashboard(request):
 
 
 
+
+# ==================================================
+# HOD DEPARTMENT STUDENT DIRECTORY
+# Read-only, restricted to the authenticated HOD's department.
+# ==================================================
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsHOD])
+def hod_students(request):
+    assignment = get_hod_department(request.user)
+
+    if assignment is None:
+        return Response(
+            {"detail": "No department has been assigned to this HOD account."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    department = assignment.department
+
+    students = (
+        Student.objects
+        .filter(course__department=department)
+        .select_related("user", "course", "course__department")
+        .order_by("full_name")
+    )
+
+    student_data = []
+
+    for student in students:
+        records = Attendance.objects.filter(
+            student=student,
+            session__course__department=department,
+        )
+
+        total_records = records.count()
+
+        attended_records = records.filter(
+            status__in=[
+                "PRESENT",
+                "LATE",
+                "PARTIAL_ATTENDANCE",
+            ]
+        ).count()
+
+        absent_records = records.filter(status="ABSENT").count()
+
+        latest_record = records.exclude(
+            check_in_time__isnull=True
+        ).order_by("-check_in_time").first()
+
+        student_data.append({
+            "student_id": student.id,
+            "name": student.full_name,
+            "registration": student.reg_number,
+            "email": student.email,
+            "phone_number": student.phone_number,
+            "course_id": student.course_id,
+            "course": student.course.name,
+            "course_code": student.course.code,
+            "year_of_study": student.year_of_study,
+            "total_attendance_records": total_records,
+            "attended_records": attended_records,
+            "absent_records": absent_records,
+            "last_attendance": (
+                latest_record.check_in_time.isoformat()
+                if latest_record else None
+            ),
+            "attendance_assessment": (
+                "RECORDED" if total_records > 0 else "NO_RECORDS"
+            ),
+        })
+
+    return Response({
+        "department": {
+            "id": department.id,
+            "name": department.name,
+        },
+        "total_students": len(student_data),
+        "students": student_data,
+        "last_updated": timezone.now().isoformat(),
+    }, status=status.HTTP_200_OK)
