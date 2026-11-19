@@ -342,7 +342,8 @@ def _build_report_rows(report_type, department, sessions, search):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsHOD])
 def hod_reports(request):
-    department = get_hod_department(request.user)
+    hod_assignment = get_hod_department(request.user)
+    department = hod_assignment.department if hod_assignment else None
 
     if not department:
         return Response(
@@ -433,3 +434,4 @@ def hod_reports(request):
         "total_records": len(rows),
         "generated_at": timezone.localtime().isoformat(),
     })
+
