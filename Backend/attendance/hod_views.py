@@ -1110,8 +1110,20 @@ def hod_analytics(request):
             else 0
         )
 
+        # Display the actual date range for each semester section.
+        period_start = start_date + timedelta(
+            days=(index * total_days) // 6
+        )
+
+        period_end = start_date + timedelta(
+            days=((index + 1) * total_days) // 6 - 1
+        )
+
         attendance_trend.append({
-            "period": f"Period {index + 1}",
+            "period": (
+                f"{period_start.strftime('%d %b')} - "
+                f"{period_end.strftime('%d %b')}"
+            ),
             "attendance_percentage": round(percentage, 2),
         })
 
@@ -1130,4 +1142,5 @@ def hod_analytics(request):
             ),
         },
     }, status=status.HTTP_200_OK)
+
 
