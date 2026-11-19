@@ -747,6 +747,7 @@ def hod_dashboard(request):
 # Read-only, restricted to the authenticated HOD's department.
 # ==================================================
 
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsHOD])
 def hod_students(request):
@@ -760,6 +761,15 @@ def hod_students(request):
 
     department = assignment.department
 
+    academic_year = request.query_params.get("academic_year")
+    semester = request.query_params.get("semester")
+
+    if bool(academic_year) != bool(semester):
+        return Response(
+            {"detail": "Academic year and semester must be provided together."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     students = (
         Student.objects
         .filter(course__department=department)
@@ -769,49 +779,235 @@ def hod_students(request):
 
     student_data = []
 
-    for student in students:
-        records = Attendance.objects.filter(
-            student=student,
-            session__course__department=department,
+    # Keep the existing all-time directory behaviour when no
+    # academic year and semester are supplied.
+    if not academic_year and not semester:
+
+        for student in students:
+            records = Attendance.objects.filter(
+                student=student,
+                session__course__department=department,
+            )
+
+            total_records = records.count()
+
+            attended_records = records.filter(
+                status__in=[
+                    "PRESENT",
+                    "LATE",
+                    "PARTIAL_ATTENDANCE",
+                ]
+            ).count()
+
+            absent_records = records.filter(status="ABSENT").count()
+
+            latest_record = records.exclude(
+                check_in_time__isnull=True
+            ).order_by("-check_in_time").first()
+
+            student_data.append({
+                "student_id": student.id,
+                "name": student.full_name,
+                "registration": student.reg_number,
+                "email": student.email,
+                "phone_number": student.phone_number,
+                "course_id": student.course_id,
+                "course": student.course.name,
+                "course_code": student.course.code,
+                "year_of_study": student.year_of_study,
+                "total_attendance_records": total_records,
+                "attended_records": attended_records,
+                "absent_records": absent_records,
+                "attendance_percentage": None,
+                "last_attendance": (
+                    latest_record.check_in_time.isoformat()
+                    if latest_record else None
+                ),
+                "attendance_assessment": (
+                    "RECORDED" if total_records > 0 else "NO_RECORDS"
+                ),
+            })
+
+    else:
+        calendar = SemesterCalendar.objects.filter(
+            academic_year=academic_year,
+            semester=semester,
+        ).first()
+
+        if not calendar:
+            return Response(
+                {"detail": "No academic calendar was found for the selected semester."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not calendar.teaching_start_date or not calendar.teaching_end_date:
+            return Response(
+                {"detail": "Teaching dates are missing from the selected academic calendar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        start_date = calendar.teaching_start_date
+        end_date = calendar.teaching_end_date
+
+        excluded_dates = set()
+
+        excluded_periods = calendar.periods.filter(
+            period_type__in=["BREAK", "REVISION", "EXAM", "OTHER"]
         )
 
-        total_records = records.count()
+        for period in excluded_periods:
+            period_start = max(period.start_date, start_date)
+            period_end = min(period.end_date, end_date)
 
-        attended_records = records.filter(
-            status__in=[
+            current_date = period_start
+
+            while current_date <= period_end:
+                excluded_dates.add(current_date)
+                current_date += timedelta(days=1)
+
+        sessions = list(
+            AttendanceSession.objects.filter(
+                course__department=department,
+                date__gte=start_date,
+                date__lte=end_date,
+                is_active=False,
+            ).filter(
+                Q(end_time__isnull=False) | Q(ended_at__isnull=False)
+            ).select_related(
+                "course",
+                "subject",
+                "timetable",
+            ).order_by("date", "start_time")
+        )
+
+        sessions = [
+            session for session in sessions
+            if session.date not in excluded_dates
+        ]
+
+        session_ids = [session.id for session in sessions]
+
+        finalized_statuses = [
+            "PRESENT",
+            "LATE",
+            "PARTIAL_ATTENDANCE",
+            "ABSENT",
+        ]
+
+        attendance_records = list(
+            Attendance.objects.filter(
+                session_id__in=session_ids,
+                status__in=finalized_statuses,
+            ).select_related(
+                "student",
+                "session",
+                "session__timetable",
+            )
+        )
+
+        course_scheduled_hours = {}
+
+        for session in sessions:
+            course_id = session.course_id
+
+            course_scheduled_hours[course_id] = (
+                course_scheduled_hours.get(course_id, 0)
+                + _hod_get_scheduled_hours(session)
+            )
+
+        student_attended_hours = {}
+        student_record_counts = {}
+        student_attended_records = {}
+        student_absent_records = {}
+        latest_records = {}
+
+        for record in attendance_records:
+            student_id = record.student_id
+
+            student_record_counts[student_id] = (
+                student_record_counts.get(student_id, 0) + 1
+            )
+
+            if record.status in [
                 "PRESENT",
                 "LATE",
                 "PARTIAL_ATTENDANCE",
-            ]
-        ).count()
+            ]:
+                student_attended_records[student_id] = (
+                    student_attended_records.get(student_id, 0) + 1
+                )
 
-        absent_records = records.filter(status="ABSENT").count()
+                attended = _hod_get_attended_hours(record)
+                scheduled = _hod_get_scheduled_hours(record.session)
 
-        latest_record = records.exclude(
-            check_in_time__isnull=True
-        ).order_by("-check_in_time").first()
+                student_attended_hours[student_id] = (
+                    student_attended_hours.get(student_id, 0)
+                    + min(attended, scheduled)
+                )
 
-        student_data.append({
-            "student_id": student.id,
-            "name": student.full_name,
-            "registration": student.reg_number,
-            "email": student.email,
-            "phone_number": student.phone_number,
-            "course_id": student.course_id,
-            "course": student.course.name,
-            "course_code": student.course.code,
-            "year_of_study": student.year_of_study,
-            "total_attendance_records": total_records,
-            "attended_records": attended_records,
-            "absent_records": absent_records,
-            "last_attendance": (
-                latest_record.check_in_time.isoformat()
-                if latest_record else None
-            ),
-            "attendance_assessment": (
-                "RECORDED" if total_records > 0 else "NO_RECORDS"
-            ),
-        })
+            elif record.status == "ABSENT":
+                student_absent_records[student_id] = (
+                    student_absent_records.get(student_id, 0) + 1
+                )
+
+            if record.check_in_time:
+                previous = latest_records.get(student_id)
+
+                if (
+                    previous is None
+                    or record.check_in_time > previous.check_in_time
+                ):
+                    latest_records[student_id] = record
+
+        for student in students:
+            student_id = student.id
+
+            total_records = student_record_counts.get(student_id, 0)
+            attended_records = student_attended_records.get(student_id, 0)
+            absent_records = student_absent_records.get(student_id, 0)
+
+            percentage = None
+
+            if total_records > 0:
+                total_scheduled = course_scheduled_hours.get(
+                    student.course_id, 0
+                )
+
+                attended = student_attended_hours.get(student_id, 0)
+
+                percentage = (
+                    min(attended / total_scheduled * 100, 100)
+                    if total_scheduled > 0
+                    else 0
+                )
+
+            latest_record = latest_records.get(student_id)
+
+            student_data.append({
+                "student_id": student.id,
+                "name": student.full_name,
+                "registration": student.reg_number,
+                "email": student.email,
+                "phone_number": student.phone_number,
+                "course_id": student.course_id,
+                "course": student.course.name,
+                "course_code": student.course.code,
+                "year_of_study": student.year_of_study,
+                "total_attendance_records": total_records,
+                "attended_records": attended_records,
+                "absent_records": absent_records,
+                "attendance_percentage": (
+                    round(percentage, 2)
+                    if percentage is not None else None
+                ),
+                "last_attendance": (
+                    latest_record.check_in_time.isoformat()
+                    if latest_record else None
+                ),
+                "attendance_assessment": (
+                    "RECORDED" if total_records > 0 else "NO_RECORDS"
+                ),
+            })
 
     return Response({
         "department": {
@@ -822,6 +1018,7 @@ def hod_students(request):
         "students": student_data,
         "last_updated": timezone.now().isoformat(),
     }, status=status.HTTP_200_OK)
+
 
 
 # ==========================================================
@@ -1023,7 +1220,8 @@ def hod_analytics(request):
         else:
             at_risk += 1
 
-    # Courses requiring attention.
+    # Calculate attendance progress for all courses with attendance records.
+    all_courses = []
     courses_requiring_attention = []
 
     for course in courses:
@@ -1045,11 +1243,19 @@ def hod_analytics(request):
             else 0
         )
 
+        course_data = {
+            "course": course.name,
+            "attendance_percentage": round(percentage, 2),
+        }
+
+        all_courses.append(course_data)
+
         if percentage < 75:
-            courses_requiring_attention.append({
-                "course": course.name,
-                "attendance_percentage": round(percentage, 2),
-            })
+            courses_requiring_attention.append(course_data)
+
+    all_courses.sort(
+        key=lambda item: item["attendance_percentage"]
+    )
 
     courses_requiring_attention.sort(
         key=lambda item: item["attendance_percentage"]
@@ -1133,6 +1339,7 @@ def hod_analytics(request):
             "at_risk": at_risk,
             "no_records": no_records,
         },
+        "all_courses": all_courses,
         "courses_requiring_attention": courses_requiring_attention,
         "attendance_trend": attendance_trend,
         "hod_attention": {
@@ -1142,5 +1349,6 @@ def hod_analytics(request):
             ),
         },
     }, status=status.HTTP_200_OK)
+
 
 
