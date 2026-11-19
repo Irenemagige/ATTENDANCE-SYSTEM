@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import start_session
+from .hod_views import hod_dashboard
 
 from .views import (
     start_session,
@@ -43,6 +44,12 @@ urlpatterns = [
     name='lecturer_attendance_history',
 ),
     
+    # HOD department dashboard
+    path(
+    'hod/dashboard/',
+    hod_dashboard,
+    name='hod_dashboard',
+),
     path(
     'lecturer/active-session-monitor/',
     lecturer_active_session_monitor,
