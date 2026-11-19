@@ -1363,7 +1363,6 @@ def lecturer_dashboard(request):
 
 # ATTENDANCE REPORT
 # ======================================================
-
 @api_view(["GET"])
 @permission_classes([IsLecturer])
 def attendance_report(request):
@@ -1373,6 +1372,7 @@ def attendance_report(request):
     ).select_related(
         "course",
         "subject",
+        "classroom",
     ).order_by(
         "-start_time",
     )
@@ -1402,7 +1402,10 @@ def attendance_report(request):
         attended_count = 0
 
         present_count = 0
+        late_count = 0
+        partial_count = 0
         absent_count = 0
+        in_progress_count = 0
 
         for student in students:
 
@@ -1424,17 +1427,26 @@ def attendance_report(request):
                     )
 
                 if record.status in (
-                   "PRESENT",
-                   "LATE",
-                   "PARTIAL_ATTENDANCE",
+                    "PRESENT",
+                    "LATE",
+                    "PARTIAL_ATTENDANCE",
                 ):
                     attended_count += 1
 
                 if record.status == "PRESENT":
                     present_count += 1
 
-                if record.status == "ABSENT":
+                elif record.status == "LATE":
+                    late_count += 1
+
+                elif record.status == "PARTIAL_ATTENDANCE":
+                    partial_count += 1
+
+                elif record.status == "ABSENT":
                     absent_count += 1
+
+                elif record.status == "IN_PROGRESS":
+                    in_progress_count += 1
 
             else:
                 student_percentage = 0
@@ -1460,6 +1472,8 @@ def attendance_report(request):
             else 0
         )
 
+        classroom = session.classroom
+
         result.append({
 
             "session_id": session.id,
@@ -1474,13 +1488,50 @@ def attendance_report(request):
                 else None
             ),
 
+            "start_time": (
+                session.start_time.isoformat()
+                if session.start_time
+                else None
+            ),
+
+            "end_time": (
+                session.end_time.isoformat()
+                if session.end_time
+                else None
+            ),
+
+            "ended_at": (
+                session.ended_at.isoformat()
+                if session.ended_at
+                else None
+            ),
+
+            "classroom": (
+                {
+                    "room_name": classroom.room_name,
+                    "room_number": classroom.room_number,
+                }
+                if classroom
+                else None
+            ),
+
+            "is_override": session.is_override,
+
+            "auto_closed": session.auto_closed,
+
             "total": total_students,
 
             "attended_count": attended_count,
 
             "present": present_count,
 
+            "late": late_count,
+
+            "partial": partial_count,
+
             "absent": absent_count,
+
+            "in_progress": in_progress_count,
 
             "percentage": session_percentage,
 
@@ -1493,6 +1544,7 @@ def attendance_report(request):
 
 
 
+
 # ======================================================
 # SINGLE SESSION REPORT
 # ======================================================
@@ -1501,75 +1553,119 @@ def attendance_report(request):
 @permission_classes([IsLecturer])
 def session_report(request, session_id):
 
-
-    if not session_id:
-        return Response(
-        {
-            "error": "session_id is required"
-        },
-        status=400
-        )
-
     session = AttendanceSession.objects.filter(
-    id=session_id,
-    lecturer=request.user
-).first()
+        id=session_id,
+        lecturer=request.user
+    ).select_related(
+        "course",
+        "subject",
+        "classroom",
+    ).first()
 
     if not session:
         return Response(
-        {
-            "error": "Session not found"
-        },
-        status=404
+            {"error": "Session not found"},
+            status=404
         )
 
+    # Get every student enrolled in this course.
+    students = Student.objects.filter(
+        course=session.course
+    ).order_by("full_name")
 
+    # Get existing attendance records for this session.
+    attendance_records = {
+        record.student_id: record
+        for record in Attendance.objects.filter(
+            session=session
+        ).select_related("student")
+    }
 
-    records = Attendance.objects.filter(
-        session=session
-    ).select_related(
-        "student"
-    )
+    student_records = []
 
+    for student in students:
 
+        record = attendance_records.get(student.id)
+
+        if record:
+
+            # Calculate live attendance from movement logs
+            # when the student has checked in but not checked out.
+            if (
+                record.check_in_time
+                and not record.check_out_time
+            ):
+                attendance_percentage = (
+                    calculate_movement_attendance(record)["percentage"]
+                )
+            else:
+                attendance_percentage = float(
+                    record.attendance_percentage or 0
+                )
+
+            status = record.status
+            check_in = record.check_in_time
+            check_out = record.check_out_time
+
+        else:
+
+            attendance_percentage = 0
+
+            # Do not mark a student absent while the session
+            # is still active.
+            status = (
+                "NOT_CHECKED_IN"
+                if session.is_active
+                else "ABSENT"
+            )
+
+            check_in = None
+            check_out = None
+
+        attendance_percentage = round(
+            min(max(float(attendance_percentage), 0), 100),
+            2
+        )
+
+        student_records.append({
+            "student_id": student.id,
+            "name": student.full_name,
+            "registration": student.reg_number,
+            "status": status,
+            "attendance_percentage": attendance_percentage,
+            "check_in": (
+                check_in.isoformat()
+                if check_in else None
+            ),
+            "check_out": (
+                check_out.isoformat()
+                if check_out else None
+            ),
+        })
 
     return Response({
-
         "session_id": session.id,
-
         "course": session.course.name,
-
         "subject": session.subject.name,
-
-
-        "records": [
-
-            {
-
-                "student_id": record.student.id,
-
-                "name": record.student.full_name,
-
-                "registration":
-                    record.student.reg_number,
-
-                "status": record.status,
-                
-                "attendance_percentage": record.attendance_percentage,
-                
-
-                "check_in":
-                    record.check_in_time,
-
-                "check_out":
-                    record.check_out_time
-
-            }
-
-            for record in records
-
-        ]
-
+        "date": (
+            session.date.isoformat()
+            if session.date else None
+        ),
+        "start_time": (
+            session.start_time.isoformat()
+            if session.start_time else None
+        ),
+        "end_time": (
+            session.end_time.isoformat()
+            if session.end_time else None
+        ),
+        "classroom": (
+            session.classroom.room_name
+            if session.classroom else None
+        ),
+        "active": session.is_active,
+        "total_students": len(student_records),
+        "records": student_records,
     })
 
 
