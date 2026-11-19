@@ -1,6 +1,8 @@
+﻿
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Avg
+from django.db.models import Avg, Q
 from django.utils import timezone
 
 from rest_framework.decorators import api_view, permission_classes
@@ -9,6 +11,8 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from accounts.permissions import IsHOD
+
+from academic_calendar.models import SemesterCalendar
 
 from attendance.models import (
     AttendanceSession,
@@ -42,6 +46,228 @@ def get_hod_department(user):
         .select_related("department")
         .filter(hod=user)
         .first()
+    )
+
+
+
+# ==================================================
+# HOD CUMULATIVE SUBJECT ATTENDANCE HELPERS
+# These follow the lecturer attendance-history logic.
+# ==================================================
+
+def _hod_get_scheduled_hours(session):
+
+    if session.is_override:
+        return max(
+            (session.override_duration_minutes or 0) / 60,
+            0,
+        )
+
+    if session.timetable:
+        start = session.timetable.start_time
+        end = session.timetable.end_time
+
+        if start and end:
+            start_minutes = start.hour * 60 + start.minute
+            end_minutes = end.hour * 60 + end.minute
+
+            if end_minutes <= start_minutes:
+                end_minutes += 24 * 60
+
+            return max(
+                (end_minutes - start_minutes) / 60,
+                0,
+            )
+
+    if session.start_time and session.end_time:
+        return max(
+            (
+                session.end_time - session.start_time
+            ).total_seconds() / 3600,
+            0,
+        )
+
+    return 0
+
+
+def _hod_get_attended_hours(attendance):
+
+    if not attendance or not attendance.check_in_time:
+        return 0
+
+    result = calculate_movement_attendance(attendance)
+
+    return max(
+        result["attended_seconds"] / 3600,
+        0,
+    )
+
+
+def _hod_calculate_student_subject_percentage(
+    student,
+    subject,
+    current_session,
+):
+
+    records = Attendance.objects.filter(
+        student=student,
+        session__course=student.course,
+        session__subject=subject,
+        session__date__lte=current_session.date,
+    ).filter(
+        Q(
+            check_in_time__isnull=False,
+            check_out_time__isnull=False,
+        )
+        | Q(
+            check_in_time__isnull=True,
+            session__is_active=False,
+        )
+    ).select_related(
+        "session",
+        "session__timetable",
+    )
+
+    def legacy_percentage():
+
+        total_scheduled = 0
+        total_attended = 0
+
+        for record in records:
+            scheduled = _hod_get_scheduled_hours(record.session)
+            attended = _hod_get_attended_hours(record)
+
+            total_scheduled += scheduled
+            total_attended += min(attended, scheduled)
+
+        if total_scheduled <= 0:
+            return 0
+
+        return round(
+            min(
+                total_attended / total_scheduled * 100,
+                100,
+            ),
+            2,
+        )
+
+    calendar = SemesterCalendar.objects.filter(
+        teaching_start_date__isnull=False,
+        teaching_end_date__isnull=False,
+        teaching_start_date__lte=current_session.date,
+        teaching_end_date__gte=current_session.date,
+    ).first()
+
+    if not calendar:
+        return legacy_percentage()
+
+    end_date = min(
+        current_session.date,
+        calendar.teaching_end_date,
+    )
+
+    excluded_dates = set()
+
+    excluded_period_types = {
+        "BREAK",
+        "REVISION",
+        "EXAM",
+        "OTHER",
+    }
+
+    for period in calendar.periods.filter(
+        period_type__in=excluded_period_types,
+    ):
+        period_date = max(
+            period.start_date,
+            calendar.teaching_start_date,
+        )
+
+        period_end = min(
+            period.end_date,
+            calendar.teaching_end_date,
+        )
+
+        while period_date <= period_end:
+            excluded_dates.add(period_date)
+            period_date += timedelta(days=1)
+
+    timetables = Timetable.objects.filter(
+        course=student.course,
+        subject=subject,
+    )
+
+    if not timetables.exists():
+        return legacy_percentage()
+
+    total_scheduled_hours = 0
+    total_attended_hours = 0
+
+    scheduled_date = calendar.teaching_start_date
+
+    while scheduled_date <= end_date:
+
+        if scheduled_date not in excluded_dates:
+
+            day_code = scheduled_date.strftime("%a").upper()[:3]
+
+            for timetable in timetables:
+
+                if timetable.day != day_code:
+                    continue
+
+                start = timetable.start_time
+                end = timetable.end_time
+
+                if not start or not end:
+                    continue
+
+                start_minutes = start.hour * 60 + start.minute
+                end_minutes = end.hour * 60 + end.minute
+
+                if end_minutes <= start_minutes:
+                    end_minutes += 24 * 60
+
+                total_scheduled_hours += (
+                    end_minutes - start_minutes
+                ) / 60
+
+        scheduled_date += timedelta(days=1)
+
+    for record in records:
+
+        session_date = record.session.date
+
+        if not session_date:
+            continue
+
+        if not (
+            calendar.teaching_start_date
+            <= session_date
+            <= end_date
+        ):
+            continue
+
+        if session_date in excluded_dates:
+            continue
+
+        scheduled = _hod_get_scheduled_hours(record.session)
+        attended = _hod_get_attended_hours(record)
+
+        total_attended_hours += min(
+            attended,
+            scheduled,
+        )
+
+    if total_scheduled_hours <= 0:
+        return legacy_percentage()
+
+    return round(
+        min(
+            total_attended_hours / total_scheduled_hours * 100,
+            100,
+        ),
+        2,
     )
 
 
@@ -154,6 +380,83 @@ def hod_dashboard(request):
     )
 
     # --------------------------------------------------
+    # --------------------------------------------------
+    # 3. DEPARTMENT ATTENTION
+    # Count unique students using cumulative subject
+    # attendance percentages.
+    # --------------------------------------------------
+
+    students_requiring_attention_ids = set()
+    critical_attendance_student_ids = set()
+
+    for course in courses.order_by("name"):
+
+        course_students = list(
+            students.filter(
+                course=course
+            ).order_by("full_name")
+        )
+
+        for subject in course.subjects.all():
+
+            # Find the latest finalized session for this
+            # course and subject, across all lecturers.
+
+            latest_finalized_record = Attendance.objects.filter(
+                student__course=course,
+                session__course=course,
+                session__subject=subject,
+            ).filter(
+                Q(
+                    check_in_time__isnull=False,
+                    check_out_time__isnull=False,
+                )
+                | Q(
+                    check_in_time__isnull=True,
+                    session__is_active=False,
+                )
+            ).select_related(
+                "session",
+            ).order_by(
+                "-session__date",
+                "-session__start_time",
+            ).first()
+
+            # Do not flag students for subjects that
+            # have no finalized attendance sessions.
+
+            if not latest_finalized_record:
+                continue
+
+            latest_session = latest_finalized_record.session
+
+            for student in course_students:
+
+                subject_percentage = (
+                    _hod_calculate_student_subject_percentage(
+                        student,
+                        subject,
+                        latest_session,
+                    )
+                )
+
+                if subject_percentage < 80:
+                    students_requiring_attention_ids.add(
+                        student.id
+                    )
+
+                if subject_percentage < 75:
+                    critical_attendance_student_ids.add(
+                        student.id
+                    )
+
+    students_requiring_attention = len(
+        students_requiring_attention_ids
+    )
+
+    critical_attendance_cases = len(
+        critical_attendance_student_ids
+    )
     # 3. LIVE ATTENDANCE MONITORING
     # --------------------------------------------------
 
@@ -421,6 +724,11 @@ def hod_dashboard(request):
             "average_attendance": average_attendance,
         },
 
+        "department_attention": {
+            "students_requiring_attention": students_requiring_attention,
+            "critical_attendance_cases": critical_attendance_cases,
+        },
+
         "live_sessions": live_sessions_data,
 
         "courses": courses_data,
@@ -430,3 +738,6 @@ def hod_dashboard(request):
         "last_updated": timezone.now().isoformat(),
 
     }, status=status.HTTP_200_OK)
+
+
+
