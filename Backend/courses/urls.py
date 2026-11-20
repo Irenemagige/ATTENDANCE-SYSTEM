@@ -1,8 +1,11 @@
 from django.urls import path
 from .views import assign_student_to_course, assign_lecturer_to_course
 from . import views
+from . import timetable_pdf
 
 urlpatterns = [
+    path('timetable/pdf/preview/', timetable_pdf.preview_timetable_pdf, name='preview-timetable-pdf'),
+    path('timetable/pdf/confirm/', timetable_pdf.confirm_timetable_pdf, name='confirm-timetable-pdf'),
     path('assign-student/', assign_student_to_course, name='assign_student_to_course'),
     path('assign-lecturer/', assign_lecturer_to_course, name='assign_lecturer-to_course'),
     path('lecturer/', views.lecturer_courses, name='lecturer_courses'),
