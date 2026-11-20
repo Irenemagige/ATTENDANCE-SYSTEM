@@ -1,3 +1,12 @@
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.core.exceptions import ValidationError
+from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth import get_user_model, update_session_auth_hash
+from django.conf import settings
 import random
 import string
 from datetime import timedelta
@@ -667,3 +676,128 @@ def notifications(request):
             for n in notifications
         ]
     })
+
+# Shared password management for authenticated HOD and Lecturer accounts.
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def profile_set_password(request):
+    new_password = request.data.get("new_password")
+    confirm_password = request.data.get("confirm_password")
+
+    if not new_password or not confirm_password:
+        return Response(
+            {"detail": "New password and confirmation are required."},
+            status=400,
+        )
+
+    if new_password != confirm_password:
+        return Response(
+            {"detail": "Passwords do not match."},
+            status=400,
+        )
+
+    try:
+        validate_password(new_password, user=request.user)
+    except ValidationError as error:
+        return Response({"detail": list(error.messages)}, status=400)
+
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+    update_session_auth_hash(request, request.user)
+
+    return Response({"detail": "Password updated successfully."})
+
+
+# Public endpoint: send a secure, time-limited password-reset link.
+@api_view(["POST"])
+@permission_classes([])
+def request_password_reset(request):
+    email = str(request.data.get("email", "")).strip()
+
+    if not email:
+        return Response({"detail": "Email address is required."}, status=400)
+
+    User = get_user_model()
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+
+    # Do not disclose whether an account exists.
+    if user:
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        frontend_url = getattr(
+            settings,
+            "FRONTEND_URL",
+            "http://localhost:5175",
+        ).rstrip("/")
+
+        reset_url = (
+            f"{frontend_url}/reset-password"
+            f"?uid={uid}&token={token}"
+        )
+
+        try:
+            send_mail(
+                subject="GeoAttend Password Reset",
+                message=(
+                    f"Hello {user.get_full_name() or user.username},\n\n"
+                    "A password reset was requested for your GeoAttend account.\n"
+                    "Use the link below to choose a new password:\n\n"
+                    f"{reset_url}\n\n"
+                    "This link expires according to the configured Django "
+                    "PASSWORD_RESET_TIMEOUT setting. It can only be used once.\n"
+                    "If you did not request this, ignore this email."
+                ),
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception:
+            return Response(
+                {"detail": "Unable to send the reset email. Please try again later."},
+                status=503,
+            )
+
+    return Response({
+        "detail": "If an active account uses that email, a password reset link has been sent."
+    })
+
+
+# Public endpoint: validate the reset link and save the new password.
+@api_view(["POST"])
+@permission_classes([])
+def confirm_password_reset(request):
+    uid = request.data.get("uid")
+    token = request.data.get("token")
+    new_password = request.data.get("new_password")
+    confirm_password = request.data.get("confirm_password")
+
+    if not all([uid, token, new_password, confirm_password]):
+        return Response(
+            {"detail": "Reset details and both password fields are required."},
+            status=400,
+        )
+
+    if new_password != confirm_password:
+        return Response({"detail": "Passwords do not match."}, status=400)
+
+    User = get_user_model()
+
+    try:
+        user_id = force_str(urlsafe_base64_decode(uid))
+        user = User.objects.get(pk=user_id, is_active=True)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        return Response({"detail": "Invalid or expired reset link."}, status=400)
+
+    if not default_token_generator.check_token(user, token):
+        return Response({"detail": "Invalid or expired reset link."}, status=400)
+
+    try:
+        validate_password(new_password, user=user)
+    except ValidationError as error:
+        return Response({"detail": list(error.messages)}, status=400)
+
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+
+    return Response({"detail": "Password reset successfully. You can now log in."})

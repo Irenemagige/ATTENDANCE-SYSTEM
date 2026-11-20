@@ -36,9 +36,9 @@ def calculate_attendance(attendance, session):
 
     attendance.percentage = percent
 
-    if percent >= 70:
+    if percent >= 50:
         attendance.status = "Present"
-    elif percent >= 50:
+    elif percent <= 50:
         attendance.status = "Late"
     else:
         attendance.status = "Absent"

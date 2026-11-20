@@ -51,7 +51,7 @@ def student_dashboard(request):
         total_absent = attendance_records.filter(
             status="ABSENT"
             ).count()
-        status = "Fine" if percentage >= 75 else "Critical"
+        status = "Fine" if percentage >= 50 else "Critical"
 
         return Response({
             "success": True,

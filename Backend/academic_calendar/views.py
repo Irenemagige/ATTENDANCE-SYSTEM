@@ -1,4 +1,4 @@
-from django.urls import path
+﻿from django.urls import path
 
 from datetime import datetime, timedelta
 
@@ -18,7 +18,7 @@ from courses.models import Subject, Timetable, LecturerCourse,  HODDepartment
 from students.models import Student
 
 from .models import SemesterCalendar
-from .serializers import SemesterCalendarSerializer
+from .serializers import SemesterCalendarSerializer, AcademicCalendarPeriodSerializer
 
 
 
@@ -645,3 +645,36 @@ def hod_semester_eligibility(request, calendar_id):
         },
         status=status.HTTP_200_OK,
     )
+
+class AcademicCalendarPeriodListCreateView(generics.ListCreateAPIView):
+    serializer_class = AcademicCalendarPeriodSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return AcademicCalendarPeriod.objects.filter(
+            calendar_id=self.kwargs["calendar_id"]
+        ).select_related("calendar")
+
+    def perform_create(self, serializer):
+        calendar = generics.get_object_or_404(
+            SemesterCalendar,
+            id=self.kwargs["calendar_id"],
+        )
+        serializer.save(calendar=calendar)
+
+
+class AcademicCalendarPeriodDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = AcademicCalendarPeriodSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return AcademicCalendarPeriod.objects.filter(
+            calendar_id=self.kwargs["calendar_id"]
+        )
+
+
+class SemesterCalendarDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = SemesterCalendar.objects.all()
+    serializer_class = SemesterCalendarSerializer
+    permission_classes = [IsAdmin]
+    parser_classes = [MultiPartParser, FormParser]

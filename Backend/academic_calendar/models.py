@@ -11,17 +11,14 @@ class SemesterCalendar(models.Model):
         ("SUMMER", "Summer Semester"),
     ]
 
-    title = models.CharField(max_length=200)
-
-    academic_year = models.CharField(
-        max_length=9,
-        help_text="Example: 2026/2027",
-    )
-
+    title = models.CharField(max_length=200, blank=True, default="")
+    academic_year = models.CharField(max_length=9, blank=True, default="")
     semester = models.CharField(
-        max_length=20,
-        choices=SEMESTER_CHOICES,
-    )
+    max_length=20,
+    choices=SEMESTER_CHOICES,
+    blank=True,
+    default="",
+)
 
     document = models.FileField(
         upload_to="semester_calendars/",
