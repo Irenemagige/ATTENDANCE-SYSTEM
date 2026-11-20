@@ -432,6 +432,24 @@ class UserManagementViewSet(viewsets.ModelViewSet):
         user = serializer.save()
         return Response(UserListSerializer(user).data)
 
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+
+        if user.pk == request.user.pk:
+            return Response(
+                {"detail": "You cannot delete your own administrator account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if user.is_superuser and not request.user.is_superuser:
+            return Response(
+                {"detail": "Only a superuser can delete another superuser."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return super().destroy(request, *args, **kwargs)
+
+
     @action(detail=True, methods=["patch"])
     def groups(self, request, pk=None):
         user = self.get_object()
@@ -801,3 +819,33 @@ def confirm_password_reset(request):
     user.save(update_fields=["password"])
 
     return Response({"detail": "Password reset successfully. You can now log in."})
+
+# -------------------------
+# SYSTEM SETTINGS API
+# -------------------------
+from rest_framework.views import APIView
+from accounts.models import SystemSettings
+from accounts.serializers import SystemSettingsSerializer
+
+
+class SystemSettingsAPIView(APIView):
+    permission_classes = [IsAdminOrStaff]
+
+    def get_settings(self):
+        settings_record, _ = SystemSettings.objects.get_or_create(pk=1)
+        return settings_record
+
+    def get(self, request):
+        serializer = SystemSettingsSerializer(self.get_settings())
+        return Response(serializer.data)
+
+    def put(self, request):
+        settings_record = self.get_settings()
+        serializer = SystemSettingsSerializer(
+            settings_record,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

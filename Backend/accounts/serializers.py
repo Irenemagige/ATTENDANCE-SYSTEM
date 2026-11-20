@@ -141,3 +141,41 @@ class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
         fields = ["id", "name", "codename", "app_label", "model"]
+
+class SystemSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        from accounts.models import SystemSettings
+        model = SystemSettings
+        fields = [
+            "id",
+            "institution_name",
+            "system_name",
+            "timezone",
+            "late_threshold_minutes",
+            "minimum_attendance_percentage",
+            "checkout_grace_period_minutes",
+            "default_geofence_radius_meters",
+            "require_location_verification",
+            "require_wifi_verification",
+            "require_ble_verification",
+            "require_fingerprint_verification",
+            "require_otp_verification",
+            "notifications_enabled",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate_minimum_attendance_percentage(self, value):
+        if value > 100:
+            raise serializers.ValidationError("Percentage cannot exceed 100.")
+        return value
+
+    def validate_late_threshold_minutes(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Late threshold must be at least 1 minute.")
+        return value
+
+    def validate_default_geofence_radius_meters(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Geofence radius must be at least 1 metre.")
+        return value

@@ -90,3 +90,29 @@ class UserSessionState(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.current_state}"
 
+
+# -------------------------
+# SYSTEM SETTINGS
+# -------------------------
+class SystemSettings(models.Model):
+    institution_name = models.CharField(max_length=200, default="Ardhi University")
+    system_name = models.CharField(max_length=100, default="GeoAttend")
+    timezone = models.CharField(max_length=100, default="Africa/Dar_es_Salaam")
+
+    late_threshold_minutes = models.PositiveIntegerField(default=30)
+    minimum_attendance_percentage = models.PositiveIntegerField(default=75)
+    checkout_grace_period_minutes = models.PositiveIntegerField(default=10)
+
+    default_geofence_radius_meters = models.PositiveIntegerField(default=20)
+    require_location_verification = models.BooleanField(default=True)
+
+    require_wifi_verification = models.BooleanField(default=True)
+    require_ble_verification = models.BooleanField(default=True)
+    require_fingerprint_verification = models.BooleanField(default=True)
+    require_otp_verification = models.BooleanField(default=True)
+
+    notifications_enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.institution_name} - System Settings"

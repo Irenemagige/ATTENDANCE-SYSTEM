@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import timedelta
 from pathlib import Path
 import os
 import dj_database_url
@@ -6,8 +6,8 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "django-insecure-+_ej_51%6@xq(s(p5l-rsug#j_go9=u082q!%9)g-zy-@r8a_)"
-DEBUG = True
+SECRET_KEY = os.environ.get("SECRET_KEY", "local-development-only-secret-key")
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = ["127.0.0.1", "localhost",  "attendance-system-production-5479.up.railway.app"]
 CSRF_TRUSTED_ORIGINS = [
     "https://attendance-system-production-5479.up.railway.app",

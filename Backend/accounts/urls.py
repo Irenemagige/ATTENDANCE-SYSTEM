@@ -10,6 +10,7 @@ router.register("groups", views.GroupViewSet, basename="managed-group")
 router.register("permissions", views.PermissionViewSet, basename="managed-permission")
 
 urlpatterns = [
+    path("system-settings/", views.SystemSettingsAPIView.as_view(), name="system-settings"),
     path("auth/login/", views.login, name="login"),
     path("auth/password-reset/confirm/", views.confirm_password_reset, name="confirm_password_reset"),
     path("auth/password-reset/request/", views.request_password_reset, name="request_password_reset"),
