@@ -2,7 +2,7 @@
 from .views import start_session
 from .hod_views import hod_dashboard, hod_students, hod_analytics
 from .hod_report_views import hod_reports
-from .hod_activity_views import hod_audit_history
+from .hod_activity_views import hod_audit_history, hod_department_timetable
 
 from .views import (
     start_session,
@@ -56,6 +56,7 @@ urlpatterns = [
     path('hod/analytics/', hod_analytics, name='hod_analytics'),
     path('hod/reports/', hod_reports, name='hod_reports'),
     path('hod/activity-history/', hod_audit_history, name='hod_activity_history'),
+    path('hod/timetable/', hod_department_timetable, name='hod_department_timetable'),
     path(
     'lecturer/active-session-monitor/',
     lecturer_active_session_monitor,

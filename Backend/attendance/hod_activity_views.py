@@ -420,3 +420,55 @@ def hod_audit_history(request):
         "accountability": accountability,
         "last_updated": timezone.now().isoformat(),
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsHOD])
+def hod_department_timetable(request):
+    hod_profile = get_hod_department(request.user)
+
+    if not hod_profile or not hod_profile.department:
+        return Response(
+            {"detail": "No department is assigned to this HOD account."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    department = hod_profile.department
+
+    timetable = (
+        Timetable.objects
+        .filter(course__department=department)
+        .select_related("course", "subject", "lecturer")
+        .order_by("day", "start_time", "course__name")
+    )
+
+    return Response({
+        "department": {
+            "id": department.id,
+            "name": department.name,
+        },
+        "total_entries": timetable.count(),
+        "timetable": [
+            {
+                "id": item.id,
+                "course": {
+                    "id": item.course.id,
+                    "name": item.course.name,
+                    "code": item.course.code,
+                },
+                "subject": {
+                    "id": item.subject.id,
+                    "name": item.subject.name,
+                    "code": item.subject.code,
+                },
+                "lecturer": _user_display(item.lecturer),
+                "lecturer_id": item.lecturer_id,
+                "day": item.day,
+                "day_name": item.get_day_display(),
+                "start_time": item.start_time.strftime("%H:%M"),
+                "end_time": item.end_time.strftime("%H:%M"),
+                "room": item.room,
+            }
+            for item in timetable
+        ],
+    })
