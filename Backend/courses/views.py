@@ -764,3 +764,441 @@ def admin_timetable_detail(request, pk):
     ).get(id=item.id)
 
     return Response(admin_timetable_data(item))
+
+
+# ==========================================================
+# ADMIN ACADEMIC MANAGEMENT
+# ==========================================================
+
+@api_view(["GET"])
+@permission_classes([IsAdminOrStaff])
+def admin_academic_options(request):
+    departments = Department.objects.all().order_by("name")
+    courses = Course.objects.select_related("department").all().order_by("name")
+    subjects = Subject.objects.select_related("course").all().order_by("name")
+    classrooms = Classroom.objects.all().order_by("room_name")
+    lecturers = User.objects.filter(
+        groups__name__iexact="Lecturer"
+    ).distinct().order_by("username")
+
+    return Response({
+        "departments": [
+            {"id": d.id, "name": d.name} for d in departments
+        ],
+        "courses": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "code": c.code,
+                "department_id": c.department_id,
+                "department": c.department.name,
+            } for c in courses
+        ],
+        "subjects": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "code": s.code,
+                "course_id": s.course_id,
+                "course": s.course.name,
+            } for s in subjects
+        ],
+        "classrooms": [
+            {
+                "id": r.id,
+                "room_name": r.room_name,
+                "room_number": r.room_number,
+                "latitude": r.latitude,
+                "longitude": r.longitude,
+                "altitude": r.altitude,
+                "radius_meters": r.radius_meters,
+            } for r in classrooms
+        ],
+        "lecturers": [
+            {
+                "id": l.id,
+                "name": l.get_full_name() or l.username,
+                "username": l.username,
+            } for l in lecturers
+        ],
+    })
+
+
+@api_view(["PUT", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrStaff])
+def admin_course_detail(request, pk):
+    course = Course.objects.filter(id=pk).first()
+
+    if not course:
+        return Response(
+            {"detail": "Course not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "DELETE":
+        course.delete()
+        return Response({"message": "Course deleted successfully."})
+
+    name = request.data.get("name", course.name)
+    code = request.data.get("code", course.code)
+    department_id = request.data.get("department_id", course.department_id)
+
+    department = Department.objects.filter(id=department_id).first()
+
+    if not name or not code or not department:
+        return Response(
+            {"detail": "Course name, code and valid department are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if Course.objects.filter(code=code).exclude(id=pk).exists():
+        return Response(
+            {"detail": "A course with this code already exists."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    course.name = name
+    course.code = code
+    course.department = department
+    course.save()
+
+    return Response({
+        "id": course.id,
+        "name": course.name,
+        "code": course.code,
+        "department_id": course.department_id,
+        "department": department.name,
+    })
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdminOrStaff])
+def admin_subject_list_create(request):
+    if request.method == "GET":
+        subjects = Subject.objects.select_related("course").all().order_by("name")
+        return Response([
+            {
+                "id": s.id,
+                "name": s.name,
+                "code": s.code,
+                "course_id": s.course_id,
+                "course": s.course.name,
+            } for s in subjects
+        ])
+
+    name = request.data.get("name")
+    code = request.data.get("code")
+    course = Course.objects.filter(
+        id=request.data.get("course_id")
+    ).first()
+
+    if not name or not code or not course:
+        return Response(
+            {"detail": "Subject name, code and valid course are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subject = Subject.objects.create(
+        name=name,
+        code=code,
+        course=course,
+    )
+
+    return Response({
+        "id": subject.id,
+        "name": subject.name,
+        "code": subject.code,
+        "course_id": subject.course_id,
+        "course": course.name,
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PUT", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrStaff])
+def admin_subject_detail(request, pk):
+    subject = Subject.objects.filter(id=pk).first()
+
+    if not subject:
+        return Response(
+            {"detail": "Subject not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "DELETE":
+        subject.delete()
+        return Response({"message": "Subject deleted successfully."})
+
+    name = request.data.get("name", subject.name)
+    code = request.data.get("code", subject.code)
+    course_id = request.data.get("course_id", subject.course_id)
+    course = Course.objects.filter(id=course_id).first()
+
+    if not name or not code or not course:
+        return Response(
+            {"detail": "Subject name, code and valid course are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subject.name = name
+    subject.code = code
+    subject.course = course
+    subject.save()
+
+    return Response({
+        "id": subject.id,
+        "name": subject.name,
+        "code": subject.code,
+        "course_id": subject.course_id,
+        "course": course.name,
+    })
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdminOrStaff])
+def admin_classroom_list_create(request):
+    if request.method == "GET":
+        classrooms = Classroom.objects.all().order_by("room_name")
+        return Response([
+            {
+                "id": r.id,
+                "room_name": r.room_name,
+                "room_number": r.room_number,
+                "latitude": r.latitude,
+                "longitude": r.longitude,
+                "altitude": r.altitude,
+                "radius_meters": r.radius_meters,
+            } for r in classrooms
+        ])
+
+    data = request.data
+    room_name = data.get("room_name")
+    room_number = data.get("room_number")
+    radius = data.get("radius_meters", 20)
+
+    if not room_name or not room_number:
+        return Response(
+            {"detail": "Room name and room number are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        radius = int(radius)
+        if radius <= 0:
+            raise ValueError
+        latitude = data.get("latitude")
+        longitude = data.get("longitude")
+        altitude = data.get("altitude")
+
+        latitude = float(latitude) if latitude not in (None, "") else None
+        longitude = float(longitude) if longitude not in (None, "") else None
+        altitude = float(altitude) if altitude not in (None, "") else None
+
+        if latitude is not None and not -90 <= latitude <= 90:
+            raise ValueError
+        if longitude is not None and not -180 <= longitude <= 180:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "Enter valid GPS coordinates and a positive radius."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    classroom = Classroom.objects.create(
+        room_name=room_name,
+        room_number=room_number,
+        latitude=latitude,
+        longitude=longitude,
+        altitude=altitude,
+        radius_meters=radius,
+    )
+
+    return Response({
+        "id": classroom.id,
+        "room_name": classroom.room_name,
+        "room_number": classroom.room_number,
+        "latitude": classroom.latitude,
+        "longitude": classroom.longitude,
+        "altitude": classroom.altitude,
+        "radius_meters": classroom.radius_meters,
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PUT", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrStaff])
+def admin_classroom_detail(request, pk):
+    classroom = Classroom.objects.filter(id=pk).first()
+
+    if not classroom:
+        return Response(
+            {"detail": "Classroom not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "DELETE":
+        classroom.delete()
+        return Response({"message": "Classroom deleted successfully."})
+
+    data = request.data
+
+    room_name = data.get("room_name", classroom.room_name)
+    room_number = data.get("room_number", classroom.room_number)
+
+    try:
+        radius = int(data.get("radius_meters", classroom.radius_meters))
+        latitude_value = data.get("latitude", classroom.latitude)
+        longitude_value = data.get("longitude", classroom.longitude)
+        altitude_value = data.get("altitude", classroom.altitude)
+
+        latitude = float(latitude_value) if latitude_value not in (None, "") else None
+        longitude = float(longitude_value) if longitude_value not in (None, "") else None
+        altitude = float(altitude_value) if altitude_value not in (None, "") else None
+
+        if radius <= 0:
+            raise ValueError
+        if latitude is not None and not -90 <= latitude <= 90:
+            raise ValueError
+        if longitude is not None and not -180 <= longitude <= 180:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response(
+            {"detail": "Enter valid GPS coordinates and a positive radius."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not room_name or not room_number:
+        return Response(
+            {"detail": "Room name and room number are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    classroom.room_name = room_name
+    classroom.room_number = room_number
+    classroom.latitude = latitude
+    classroom.longitude = longitude
+    classroom.altitude = altitude
+    classroom.radius_meters = radius
+    classroom.save()
+
+    return Response({
+        "id": classroom.id,
+        "room_name": classroom.room_name,
+        "room_number": classroom.room_number,
+        "latitude": classroom.latitude,
+        "longitude": classroom.longitude,
+        "altitude": classroom.altitude,
+        "radius_meters": classroom.radius_meters,
+    })
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdminOrStaff])
+def admin_lecturer_assignments(request):
+    if request.method == "GET":
+        course_assignments = LecturerCourse.objects.select_related(
+            "lecturer", "course"
+        ).all()
+
+        subject_assignments = LecturerSubject.objects.select_related(
+            "lecturer", "subject", "subject__course"
+        ).all()
+
+        return Response({
+            "course_assignments": [
+                {
+                    "id": a.id,
+                    "lecturer_id": a.lecturer_id,
+                    "lecturer": a.lecturer.get_full_name() or a.lecturer.username,
+                    "course_id": a.course_id,
+                    "course": a.course.name,
+                } for a in course_assignments
+            ],
+            "subject_assignments": [
+                {
+                    "id": a.id,
+                    "lecturer_id": a.lecturer_id,
+                    "lecturer": a.lecturer.get_full_name() or a.lecturer.username,
+                    "subject_id": a.subject_id,
+                    "subject": a.subject.name,
+                    "course_id": a.subject.course_id,
+                    "course": a.subject.course.name,
+                } for a in subject_assignments
+            ],
+        })
+
+    assignment_type = request.data.get("type")
+    lecturer = User.objects.filter(
+        id=request.data.get("lecturer_id"),
+        groups__name__iexact="Lecturer",
+    ).first()
+
+    if not lecturer:
+        return Response(
+            {"detail": "Select a valid lecturer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if assignment_type == "course":
+        course = Course.objects.filter(
+            id=request.data.get("course_id")
+        ).first()
+
+        if not course:
+            return Response(
+                {"detail": "Select a valid course."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        assignment, created = LecturerCourse.objects.get_or_create(
+            lecturer=lecturer,
+            course=course,
+        )
+
+    elif assignment_type == "subject":
+        subject = Subject.objects.filter(
+            id=request.data.get("subject_id")
+        ).first()
+
+        if not subject:
+            return Response(
+                {"detail": "Select a valid subject."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        assignment, created = LecturerSubject.objects.get_or_create(
+            lecturer=lecturer,
+            subject=subject,
+        )
+
+    else:
+        return Response(
+            {"detail": "Assignment type must be course or subject."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(
+        {"message": "Lecturer assignment saved.", "created": created},
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdminOrStaff])
+def admin_delete_lecturer_assignment(request, assignment_type, pk):
+    if assignment_type == "course":
+        assignment = LecturerCourse.objects.filter(id=pk).first()
+    elif assignment_type == "subject":
+        assignment = LecturerSubject.objects.filter(id=pk).first()
+    else:
+        return Response(
+            {"detail": "Invalid assignment type."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not assignment:
+        return Response(
+            {"detail": "Assignment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    assignment.delete()
+    return Response({"message": "Lecturer assignment removed."})
