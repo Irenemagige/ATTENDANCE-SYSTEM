@@ -1,0 +1,116 @@
+from django.contrib.auth import get_user_model
+from django.db.models import Avg
+from django.utils import timezone
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+
+from accounts.permissions import IsAdminOrStaff
+from attendance.models import Attendance, AttendanceSession, SessionChangeHistory
+from courses.models import (
+    Classroom,
+    Department,
+    Course,
+    LecturerCourse,
+    LecturerSubject,
+    Subject,
+    Timetable,
+)
+from students.models import Student
+
+
+User = get_user_model()
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminOrStaff])
+def admin_dashboard(request):
+    """
+    Institution-wide, read-only dashboard statistics for administrators.
+    All figures are calculated from the existing GeoAttend database.
+    """
+
+    lecturer_ids = set(
+        LecturerCourse.objects.values_list("lecturer_id", flat=True)
+    )
+
+    lecturer_ids.update(
+        LecturerSubject.objects.values_list("lecturer_id", flat=True)
+    )
+
+    lecturer_ids.update(
+        Timetable.objects.values_list("lecturer_id", flat=True)
+    )
+
+    lecturer_ids.update(
+        AttendanceSession.objects.values_list("lecturer_id", flat=True)
+    )
+
+    completed_attendance = Attendance.objects.exclude(
+        status__in=["IN_PROGRESS", "INVALID_ATTEMPT"]
+    )
+
+    average_attendance = completed_attendance.aggregate(
+        average=Avg("attendance_percentage")
+    )["average"]
+
+    recent_records = (
+        SessionChangeHistory.objects
+        .select_related(
+            "changed_by",
+            "session__course",
+            "session__subject",
+        )
+        .order_by("-recorded_at")[:8]
+    )
+
+    recent_activity = []
+
+    for record in recent_records:
+        actor = "System"
+
+        if record.changed_by:
+            actor = (
+                record.changed_by.get_full_name()
+                or record.changed_by.username
+            )
+
+        recent_activity.append({
+            "id": record.id,
+            "actor": actor,
+            "action": record.get_change_type_display(),
+            "reason": record.reason,
+            "recorded_at": record.recorded_at.isoformat(),
+            "course": record.session.course.name,
+            "subject": record.session.subject.name,
+        })
+
+    return Response({
+        "overview": {
+            "total_users": User.objects.count(),
+            "total_admins": User.objects.filter(
+                is_staff=True
+            ).union(
+                User.objects.filter(is_superuser=True)
+            ).count(),
+            "total_hods": User.objects.filter(
+                groups__name__iexact="HOD"
+            ).distinct().count(),
+            "total_students": Student.objects.count(),
+            "total_lecturers": len(lecturer_ids),
+            "total_departments": Department.objects.count(),
+            "total_courses": Course.objects.count(),
+            "total_subjects": Subject.objects.count(),
+            "total_classrooms": Classroom.objects.count(),
+            "total_sessions": AttendanceSession.objects.count(),
+            "active_sessions": AttendanceSession.objects.filter(
+                is_active=True
+            ).count(),
+            "total_attendance_records": Attendance.objects.count(),
+            "average_attendance": round(
+                float(average_attendance or 0), 2
+            ),
+        },
+        "recent_activity": recent_activity,
+        "last_updated": timezone.now().isoformat(),
+    })

@@ -1,5 +1,7 @@
 ﻿from django.urls import path
 from .views import start_session
+from .admin_dashboard_views import admin_dashboard
+
 from .hod_views import hod_dashboard, hod_students, hod_analytics
 from .hod_report_views import hod_reports
 from .hod_activity_views import hod_audit_history, hod_department_timetable
@@ -21,6 +23,8 @@ from .views import (
 )
 
 urlpatterns = [
+    path('admin/dashboard/', admin_dashboard, name='admin_dashboard'),
+
     # Lecturer session control
     path('start-session/', start_session, name='start_session'),
     path('start/', start_session, name='attendance_start'),
