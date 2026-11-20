@@ -13,6 +13,9 @@ urlpatterns = [
     ),
     path('subjects/', views.subject_list, name='subject_list'),
     path('classrooms/', views.classroom_list, name='classroom_list'),
+    path('timetable/admin/', views.admin_timetable_list, name='admin-timetable-list'),
+    path('timetable/admin/options/', views.admin_timetable_options, name='admin-timetable-options'),
+    path('timetable/admin/<int:pk>/', views.admin_timetable_detail, name='admin-timetable-detail'),
     path('timetable/create/', views.create_timetable, name='create_timetable'),
     path(
     'timetable/upload/',

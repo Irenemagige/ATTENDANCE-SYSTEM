@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from openpyxl import load_workbook
 
 from accounts.permissions import IsAdminOrStaff, IsLecturer
-from courses.models import Course, LecturerCourse, StudentCourse, Timetable, Subject,LecturerSubject,Classroom
+from courses.models import Course, LecturerCourse, StudentCourse, Timetable, Subject, LecturerSubject, Classroom, Department
 
 User = get_user_model()
 
@@ -533,3 +533,234 @@ def lecturer_timetable(request):
             for item in timetable
         ]
     })
+
+
+
+# ==========================================================
+# ADMIN TIMETABLE MANAGEMENT - ALL DEPARTMENTS
+# ==========================================================
+
+def admin_timetable_data(item):
+    return {
+        "id": item.id,
+        "department_id": item.course.department_id,
+        "department": item.course.department.name,
+        "course_id": item.course_id,
+        "course": item.course.name,
+        "course_code": item.course.code,
+        "subject_id": item.subject_id,
+        "subject": item.subject.name,
+        "subject_code": item.subject.code,
+        "lecturer_id": item.lecturer_id,
+        "lecturer": item.lecturer.get_full_name() or item.lecturer.username,
+        "day": item.day,
+        "day_label": item.get_day_display(),
+        "start_time": item.start_time.strftime("%H:%M"),
+        "end_time": item.end_time.strftime("%H:%M"),
+        "room": item.room,
+    }
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminOrStaff])
+def admin_timetable_options(request):
+    departments = Department.objects.all().order_by("name")
+    courses = Course.objects.select_related("department").all().order_by("name")
+    subjects = Subject.objects.select_related("course").all().order_by("name")
+    lecturers = User.objects.filter(
+        groups__name__iexact="Lecturer"
+    ).distinct().order_by("username")
+
+    return Response({
+        "departments": [
+            {"id": d.id, "name": d.name}
+            for d in departments
+        ],
+        "courses": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "code": c.code,
+                "department_id": c.department_id,
+                "department": c.department.name,
+            }
+            for c in courses
+        ],
+        "subjects": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "code": s.code,
+                "course_id": s.course_id,
+            }
+            for s in subjects
+        ],
+        "lecturers": [
+            {
+                "id": lecturer.id,
+                "name": lecturer.get_full_name() or lecturer.username,
+                "username": lecturer.username,
+            }
+            for lecturer in lecturers
+        ],
+        "days": [
+            {"value": value, "label": label}
+            for value, label in Timetable.DAYS
+        ],
+    })
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdminOrStaff])
+def admin_timetable_list(request):
+    if request.method == "GET":
+        timetable = Timetable.objects.select_related(
+            "course__department",
+            "subject",
+            "lecturer",
+        ).all().order_by("day", "start_time")
+
+        department_id = request.query_params.get("department_id")
+        course_id = request.query_params.get("course_id")
+        day = request.query_params.get("day")
+
+        if department_id:
+            timetable = timetable.filter(course__department_id=department_id)
+        if course_id:
+            timetable = timetable.filter(course_id=course_id)
+        if day:
+            timetable = timetable.filter(day=day)
+
+        return Response([
+            admin_timetable_data(item) for item in timetable
+        ])
+
+    data = request.data
+
+    course = Course.objects.filter(id=data.get("course_id")).select_related("department").first()
+    subject = Subject.objects.filter(id=data.get("subject_id")).first()
+    lecturer = User.objects.filter(
+        id=data.get("lecturer_id"),
+        groups__name__iexact="Lecturer",
+    ).first()
+
+    if not course or not subject or not lecturer:
+        return Response(
+            {"detail": "Select a valid course, subject and lecturer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if subject.course_id != course.id:
+        return Response(
+            {"detail": "The selected subject does not belong to the selected course."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    day = data.get("day")
+    valid_days = [choice[0] for choice in Timetable.DAYS]
+    if day not in valid_days:
+        return Response(
+            {"detail": "Select a valid day."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    start_time = data.get("start_time")
+    end_time = data.get("end_time")
+
+    if not start_time or not end_time or start_time >= end_time:
+        return Response(
+            {"detail": "End time must be later than start time."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    item = Timetable.objects.create(
+        course=course,
+        subject=subject,
+        lecturer=lecturer,
+        day=day,
+        start_time=start_time,
+        end_time=end_time,
+        room=data.get("room", ""),
+    )
+
+    item = Timetable.objects.select_related(
+        "course__department", "subject", "lecturer"
+    ).get(id=item.id)
+
+    return Response(
+        admin_timetable_data(item),
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["PUT", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrStaff])
+def admin_timetable_detail(request, pk):
+    item = Timetable.objects.select_related(
+        "course__department", "subject", "lecturer"
+    ).filter(id=pk).first()
+
+    if not item:
+        return Response(
+            {"detail": "Timetable entry not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "DELETE":
+        item.delete()
+        return Response({"message": "Timetable entry deleted."})
+
+    data = request.data
+    course_id = data.get("course_id", item.course_id)
+    subject_id = data.get("subject_id", item.subject_id)
+    lecturer_id = data.get("lecturer_id", item.lecturer_id)
+
+    course = Course.objects.filter(id=course_id).first()
+    subject = Subject.objects.filter(id=subject_id).first()
+    lecturer = User.objects.filter(
+        id=lecturer_id,
+        groups__name__iexact="Lecturer",
+    ).first()
+
+    if not course or not subject or not lecturer:
+        return Response(
+            {"detail": "Select a valid course, subject and lecturer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if subject.course_id != course.id:
+        return Response(
+            {"detail": "The selected subject does not belong to the selected course."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    day = data.get("day", item.day)
+    if day not in [choice[0] for choice in Timetable.DAYS]:
+        return Response(
+            {"detail": "Select a valid day."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    start_time = data.get("start_time", item.start_time.strftime("%H:%M"))
+    end_time = data.get("end_time", item.end_time.strftime("%H:%M"))
+
+    if not start_time or not end_time or start_time >= end_time:
+        return Response(
+            {"detail": "End time must be later than start time."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    item.course = course
+    item.subject = subject
+    item.lecturer = lecturer
+    item.day = day
+    item.start_time = start_time
+    item.end_time = end_time
+    item.room = data.get("room", item.room)
+    item.save()
+
+    item = Timetable.objects.select_related(
+        "course__department", "subject", "lecturer"
+    ).get(id=item.id)
+
+    return Response(admin_timetable_data(item))
