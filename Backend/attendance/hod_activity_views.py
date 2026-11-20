@@ -87,7 +87,7 @@ def hod_audit_history(request):
             "subject",
             "classroom",
         )
-        .prefetch_related("attendance_records__student")
+        .prefetch_related("attendance_set__student")
         .order_by("-start_time")
     )
 
@@ -106,7 +106,7 @@ def hod_audit_history(request):
 
         student_records = []
 
-        for attendance in session.attendance_records.all():
+        for attendance in session.attendance_set.all():
             student = attendance.student
 
             student_records.append({
@@ -144,3 +144,4 @@ def hod_audit_history(request):
         "history_records": history_records,
         "last_updated": timezone.now().isoformat(),
     })
+
