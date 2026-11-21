@@ -23,11 +23,12 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
+    path("api/attendance/admin/reports/export/", admin_report_export, name="root_admin_report_export"),
     path("admin/", admin.site.urls, name="admin"),
     path("api/", api_root, name="api_root"),
     path("api/", include("accounts.urls")),
     path("api/students/", include("students.urls"), name="students"),
-    path("api/attendance/admin/reports/export/", admin_report_export, name="root_admin_report_export"),
+
     path("api/attendance/", include("attendance.urls"), name="attendance"),
     path("api/courses/", include("courses.urls"), name="courses"),
     path("api/departments/", include("departments.urls"), name="departments"),
