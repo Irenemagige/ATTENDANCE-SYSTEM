@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework import permissions
 
 from accounts.views import api_root
+from attendance.admin_report_views import admin_report_export
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
@@ -26,6 +27,7 @@ urlpatterns = [
     path("api/", api_root, name="api_root"),
     path("api/", include("accounts.urls")),
     path("api/students/", include("students.urls"), name="students"),
+    path("api/attendance/admin/reports/export/", admin_report_export, name="root_admin_report_export"),
     path("api/attendance/", include("attendance.urls"), name="attendance"),
     path("api/courses/", include("courses.urls"), name="courses"),
     path("api/departments/", include("departments.urls"), name="departments"),
