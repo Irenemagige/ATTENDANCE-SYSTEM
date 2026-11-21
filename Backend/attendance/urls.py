@@ -1,4 +1,5 @@
 ﻿from django.urls import path
+from .admin_report_views import admin_report_preview, admin_report_filters
 from .views import start_session
 from .admin_dashboard_views import admin_dashboard
 
@@ -23,6 +24,8 @@ from .views import (
 )
 
 urlpatterns = [
+    path('admin/reports/', admin_report_preview, name='admin_report_preview'),
+    path('admin/reports/filters/', admin_report_filters, name='admin_report_filters'),
     path('admin/dashboard/', admin_dashboard, name='admin_dashboard'),
 
     # Lecturer session control
@@ -70,3 +73,9 @@ urlpatterns = [
 
 
 
+
+
+from .admin_report_views import admin_report_export
+urlpatterns.append(
+    path("admin/reports/export/", admin_report_export, name="admin_report_export")
+)
