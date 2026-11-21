@@ -1,5 +1,5 @@
 ﻿from django.urls import path
-from .admin_report_views import admin_report_preview, admin_report_filters, admin_report_export
+from .admin_report_views import admin_report_preview, admin_report_filters, admin_report_export, admin_report_export
 from .views import start_session
 from .admin_dashboard_views import admin_dashboard
 
@@ -77,6 +77,3 @@ urlpatterns = [
 
 
 from .admin_report_views import admin_report_export
-urlpatterns.append(
-
-)
